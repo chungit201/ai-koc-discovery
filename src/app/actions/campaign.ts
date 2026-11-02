@@ -6,6 +6,8 @@ import { getDb } from "@/lib/db/mongo";
 import { C } from "@/lib/db/collections";
 import { CAMPAIGN_CATEGORIES, parseCampaignForm, type FieldErrors } from "@/lib/campaign";
 import { DEFAULT_CRITERIA, criteriaWarnings, sanitizeExtracted, type BriefPreview, type Criteria, type CriteriaSources } from "@/lib/brief";
+import { ASKABLE, CAPABILITIES, defaultPlan, sanitizePlan, type BriefPlan } from "@/lib/plan";
+import { handleTurn } from "@/lib/chat";
 import { parseBrief } from "@/lib/brief-parser";
 import { scoreCampaign } from "@/lib/scoring/run";
 import { runS3 } from "@/lib/pipeline/s3-content";
@@ -36,6 +38,7 @@ export async function previewCampaign(_prev: CampaignFormState, formData: FormDa
   const criteria: Criteria = { ...DEFAULT_CRITERIA, audience_ages: [] };
   const sources: CriteriaSources = {};
   let suggestions: string[] = [];
+  let plan: BriefPlan | null = null;
   let llm: BriefPreview["llm"] = null;
 
   if (input.prompt) {
@@ -44,6 +47,7 @@ export async function previewCampaign(_prev: CampaignFormState, formData: FormDa
       Object.assign(criteria, parsed.values);
       for (const f of parsed.fields) sources[f] = "prompt";
       suggestions = parsed.suggestions;
+      plan = parsed.plan;
       llm = {
         used: true,
         tokens_in: parsed.usage.tokens_in,
@@ -76,10 +80,13 @@ export async function previewCampaign(_prev: CampaignFormState, formData: FormDa
     set("followers_max", k("followers_max_k"));
   }
 
+  // Bộ lọc nâng cao có thể bổ sung ngân sách sau khi AI đã lập kế hoạch → kiểm tra lại ràng buộc
+  const finalPlan = sanitizePlan({ plan: plan?.steps ?? defaultPlan(criteria).steps, rank_by: plan?.rank_by, questions: plan?.questions }, criteria);
+
   return {
     errors: {},
     values: rawValues(formData),
-    preview: { criteria, sources, suggestions, warnings: criteriaWarnings(criteria), llm, prompt: input.prompt, mode: input.mode },
+    preview: { criteria, sources, suggestions, plan: finalPlan, warnings: criteriaWarnings(criteria), llm, prompt: input.prompt, mode: input.mode },
   };
 }
 
@@ -88,7 +95,20 @@ export async function confirmCampaign(formData: FormData): Promise<void> {
   const payload = JSON.parse(String(formData.get("payload") ?? "{}")) as NonNullable<CampaignFormState["preview"]>;
   // Never trust the round-trip: re-sanitize the criteria the client sent back
   const { values } = sanitizeExtracted(payload.criteria as unknown as Record<string, unknown>);
-  const criteria: Criteria = { ...DEFAULT_CRITERIA, audience_ages: [], ...values };
+  // Trả lời cho câu hỏi của AI ở bước xác nhận (vd ngân sách) — đi qua cùng bộ sanitize
+  const answers: Record<string, unknown> = {};
+  for (const field of ASKABLE) {
+    const v = String(formData.get(`answer_${field}`) ?? "").trim();
+    if (v) answers[field] = field === "product_focus" || field === "category_id" ? v : Number(v);
+  }
+  const { values: answered } = sanitizeExtracted(answers);
+  const criteria: Criteria = { ...DEFAULT_CRITERIA, audience_ages: [], ...values, ...answered };
+  // Trả lời có thể mở khoá bước đã bị bỏ: người dùng vừa cho ngân sách nghĩa là họ muốn được đề xuất
+  const steps = [...(payload.plan?.steps ?? [])];
+  if (answered.budget_total || answered.budget_max_per_koc) {
+    if (!steps.some((s) => s.capability === "recommend")) steps.push({ capability: "recommend", title: CAPABILITIES.recommend.title });
+  }
+  const plan = sanitizePlan({ plan: steps, rank_by: payload.plan?.rank_by, questions: [] }, criteria);
 
   const id = randomUUID();
   const db = await getDb();
@@ -97,6 +117,7 @@ export async function confirmCampaign(formData: FormData): Promise<void> {
     mode: payload.mode === "prompt" ? "prompt" : "advanced",
     prompt: typeof payload.prompt === "string" ? payload.prompt.slice(0, 1000) : null,
     criteria,
+    plan, // các bước AI đã lập — pipeline chỉ chạy đúng những bước này
     criteria_sources: payload.sources ?? {},
     ai_suggestions: (payload.suggestions ?? []).slice(0, 3),
     brief_llm: payload.llm ?? null,
@@ -123,6 +144,52 @@ export async function rescoreCampaign(formData: FormData): Promise<void> {
   await runS3(id);
   await runS4(id);
   await runS5(id);
+  revalidatePath(`/campaigns/${id}`);
+}
+
+/**
+ * Một lượt chat trên chiến dịch đã có: lưu tin nhắn, để `handleTurn` phân loại + áp thay đổi,
+ * rồi chạy lại đúng các bước bị ảnh hưởng (phần đã cache vẫn 0 token).
+ */
+export async function sendMessage(formData: FormData): Promise<void> {
+  const id = String(formData.get("id") ?? "");
+  const text = String(formData.get("text") ?? "").trim().slice(0, 1000);
+  if (!id || !text) return;
+  const db = await getDb();
+  const col = db.collection(C.campaigns);
+
+  // Lượt trước còn đang chạy → không nuốt tin nhắn, trả lời rõ là đang bận
+  const camp = await col.findOne({ _id: id as never }, { projection: { pipeline: 1 } });
+  const busy = camp?.pipeline?.lease_until && new Date(camp.pipeline.lease_until).getTime() > Date.now();
+  const userMsg = { id: randomUUID(), role: "user" as const, text, created_at: new Date() };
+  if (busy) {
+    await col.updateOne(
+      { _id: id as never },
+      { $push: { messages: { $each: [userMsg, { id: randomUUID(), role: "assistant", text: "Mình đang chạy yêu cầu trước đó, xong là mình xử lý tiếp ngay nhé.", created_at: new Date() }] } } as never },
+    );
+    revalidatePath(`/campaigns/${id}`);
+    return;
+  }
+
+  await col.updateOne({ _id: id as never }, { $push: { messages: userMsg } as never });
+  const outcome = await handleTurn(id, text);
+  await col.updateOne(
+    { _id: id as never },
+    {
+      $push: {
+        messages: {
+          id: randomUUID(),
+          role: "assistant",
+          text: outcome.reply,
+          intent: outcome.intent,
+          reruns: outcome.reruns,
+          reasons: outcome.reasons,
+          created_at: new Date(),
+        },
+      } as never,
+    },
+  );
+  if (outcome.reruns.length) void runPipeline(id, { force: true });
   revalidatePath(`/campaigns/${id}`);
 }
 

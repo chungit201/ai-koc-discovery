@@ -1,8 +1,8 @@
-import { AlertTriangle, ArrowUp, Bot, CircleCheck, Wallet } from "lucide-react";
+import { AlertTriangle, Bot, CircleCheck, Wallet } from "lucide-react";
 import type { S5Pick } from "@/lib/pipeline/s5-recommend";
 import type { Reason } from "@/lib/evidence/validate";
 import { AgentSteps, ResumeButton, type AgentStep } from "@/components/agent-steps";
-import { resumeCampaign } from "@/app/actions/campaign";
+import { resumeCampaign, sendMessage } from "@/app/actions/campaign";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Avatar } from "@/components/avatar";
@@ -13,16 +13,18 @@ import { campaignTitle, getCampaign, getShortlist, type ShortlistRow } from "@/l
 import { fmtM } from "@/lib/campaign";
 import { compact, dateTime } from "@/lib/format";
 import { SCORE_LABELS, WEIGHTS, type ScoreKey } from "@/lib/scoring/rules";
+import type { Capability } from "@/lib/plan";
+import { ChatThread } from "@/components/chat-thread";
 
 export default async function CampaignPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const c = await getCampaign(id);
   if (!c) notFound();
-  const { summary, screened, videoDone, s3, s4, s5, error, stalled, rows } = await getShortlist(id);
+  const { summary, plan, finished: ran, screened, videoDone, s3, s4, s5, error, stalled, rows } = await getShortlist(id);
   const halted = Boolean(error) || stalled;
   const scored = Boolean(summary);
   const pickN = c.koc_count ?? 5;
-  const finished = Boolean(s5) && !error;
+  const finished = ran && !error;
   const pickBy = new Map((s5?.picks ?? []).map((p, i) => [p.creator_id, { ...p, order: i }]));
   const picks = rows.filter((r) => pickBy.has(r.creator_id)).sort((a, b) => pickBy.get(a.creator_id)!.order - pickBy.get(b.creator_id)!.order);
   const reserve = rows.filter((r) => !pickBy.has(r.creator_id));
@@ -34,45 +36,53 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
     c.koc_count ? `${c.koc_count} KOC` : null,
   ].filter(Boolean) as string[];
 
-  // Each step: done → its result line; first unfinished → running (or error); the rest pending
-  const raw: { label: string; done: boolean; detail?: string; doing: string }[] = [
-    { label: "Hiểu yêu cầu chiến dịch", done: true, detail: chips.join(" · "), doing: "" },
-    {
-      label: "Lọc & chấm điểm KOC",
+  // Trạng thái thật của từng năng lực: AI đặt tên bước (`title` trong kế hoạch), còn kết quả
+  // và con số bên dưới đều do code lấy từ DB.
+  const STAGE: Record<Capability, { done: boolean; doneLabel: string; detail?: string; doing: string }> = {
+    score_fit: {
       done: scored,
+      doneLabel: summary ? `Đã lọc & chấm điểm ${summary.pool.toLocaleString("vi-VN")} KOC` : "Đã lọc & chấm điểm KOC",
       detail: summary ? `Quét ${summary.pool.toLocaleString("vi-VN")} KOC → ${summary.eligible} đạt tiêu chí → rút gọn ${summary.shortlisted} KOC` : undefined,
       doing: "Đang đối chiếu follower, khán giả, ngân sách, doanh thu…",
     },
-    {
-      label: "Đọc nội dung từng KOC",
+    screen_content: {
       done: screened,
+      doneLabel: s3 ? `Đã phân tích ${s3.kocs} KOC` : "Đã phân tích các KOC",
       detail: s3 ? `Đã đọc bio, video và sản phẩm của ${s3.kocs} KOC` : undefined,
       doing: "AI đang đọc bio, tiêu đề video và sản phẩm đã bán…",
     },
-    {
-      label: "Xem video của KOC dẫn đầu",
+    analyse_videos: {
       done: videoDone,
+      doneLabel: s4 ? `Đã xem ${s4.videos} video của ${s4.kocs} KOC` : "Đã xem video của KOC dẫn đầu",
       detail: s4 ? `Đã xem ${s4.videos} video của ${s4.kocs} KOC để kiểm chứng demo sản phẩm` : undefined,
       doing: "AI đang xem khung hình video — mất vài phút…",
     },
-    {
-      label: "Chọn KOC, chia ngân sách & viết lý do",
+    recommend: {
       done: Boolean(s5),
+      doneLabel: s5 ? `Đã chọn ${s5.picks.length} KOC & chia ngân sách` : "Đã chọn KOC & chia ngân sách",
       detail: s5 ? `Chọn ${s5.picks.length} KOC · phân bổ ${fmtM(s5.allocated)}${s5.budget_total ? ` / ${fmtM(s5.budget_total)}` : ""} (ước tính) · lý do đều kèm bằng chứng` : undefined,
       doing: "AI đang chọn KOC trong ngân sách và viết lý do kèm bằng chứng…",
     },
+  };
+
+  // Each step: done → its result line; first unfinished → running (or error); the rest pending.
+  // `label` là nhãn khi đang chạy/chờ (do AI viết), `doneLabel` là kết quả khi xong.
+  const raw: { id: string; label: string; doneLabel?: string; done: boolean; detail?: string; doing: string }[] = [
+    { id: "brief", label: "Hiểu yêu cầu chiến dịch", doneLabel: "Đã hiểu yêu cầu chiến dịch", done: true, detail: chips.join(" · "), doing: "" },
+    ...plan.steps.map((s) => ({ id: s.capability, label: s.title, ...STAGE[s.capability] })),
   ];
   const current = raw.findIndex((s) => !s.done);
   const steps: AgentStep[] = raw.map((s, i) =>
     s.done
-      ? { label: s.label, status: "done", detail: s.detail }
+      ? { id: s.id, label: s.doneLabel ?? s.label, status: "done", detail: s.detail }
       : i === current
         ? error
-          ? { label: s.label, status: "error", detail: "Có lỗi khi xử lý bước này. Tiến độ trước đó đã được lưu — bấm Tiếp tục để chạy lại từ đây." }
+          ? { id: s.id, label: s.label, status: "error", detail: "Có lỗi khi xử lý bước này. Tiến độ trước đó đã được lưu — bấm Tiếp tục để chạy lại từ đây." }
           : stalled
-          ? { label: s.label, status: "error", detail: "Quá trình bị gián đoạn. Tiến độ đã được lưu — bấm Tiếp tục để chạy tiếp từ bước này." }
-          : { label: s.label, status: "running", detail: s.doing }
-        : { label: s.label, status: "pending" },
+          ? { id: s.id, label: s.label, status: "error", detail: "Quá trình bị gián đoạn. Tiến độ đã được lưu — bấm Tiếp tục để chạy tiếp từ bước này." }
+          : { id: s.id, label: s.label, status: "running", detail: s.doing }
+        : // bước chưa tới: bỏ "Đang " để đọc như việc sắp làm ("Xem video của KOC dẫn đầu")
+          { id: s.id, label: s.label.replace(/^Đang /, ""), status: "pending" },
   );
 
   const thought = `Tìm ${pickN} KOC ${String(c.category_name ?? "").toLowerCase()}${c.budget_total ? `, tổng ngân sách ${fmtM(c.budget_total)}` : ""} — lọc theo dữ liệu thật, đọc nội dung và xem video để kiểm chứng.`;
@@ -105,6 +115,17 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
             </span>
             DETOLA AI
           </div>
+          {/* Kế hoạch AI tự lập từ yêu cầu — các thẻ bên dưới chạy đúng danh sách này */}
+          <div className="text-[14.5px] leading-relaxed">
+            <p>Tôi sẽ thực hiện theo kế hoạch sau:</p>
+            <ol className="mt-2 space-y-1.5">
+              {plan.steps.map((s, i) => (
+                <li key={s.capability} className="font-semibold">
+                  {i + 1}. {s.title}
+                </li>
+              ))}
+            </ol>
+          </div>
           <AgentSteps key={String(finished)} steps={steps} done={finished} thought={thought} />
           {halted && (
             <form action={resumeCampaign}>
@@ -113,7 +134,23 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
             </form>
           )}
 
-          {finished && summary && (
+          {/* Kế hoạch chỉ xếp hạng (không có bước đề xuất) → trả lời bằng danh sách đã xếp */}
+          {finished && summary && !s5 && (
+            <>
+              <p className="text-[14.5px] leading-relaxed">
+                Từ <b className="num">{summary.pool.toLocaleString("vi-VN")}</b> KOC, có <b className="num">{summary.eligible}</b> KOC đạt tiêu chí. Dưới đây là{" "}
+                <b className="text-brand">{rows.length} KOC</b> dẫn đầu, xếp theo {plan.rank_by === "revenue" ? "doanh thu giảm dần" : "độ phù hợp"}. Muốn mình chọn ra nhóm
+                tốt nhất và chia ngân sách thì cho biết sản phẩm và ngân sách chiến dịch.
+              </p>
+              <div className="space-y-4">
+                {rows.map((r, i) => (
+                  <KocCard key={r.creator_id} r={r} rank={i + 1} />
+                ))}
+              </div>
+            </>
+          )}
+
+          {finished && summary && s5 && (
             <>
               <p className="text-[14.5px] leading-relaxed">
                 Từ <b className="num">{summary.pool.toLocaleString("vi-VN")}</b> KOC, có <b className="num">{summary.eligible}</b> KOC đạt tiêu chí. Mình đề xuất{" "}
@@ -177,15 +214,17 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
                   })}
                 </div>
               )}
+              {/* Chỉ hiện đúng số KOC được đề xuất; nhóm dự phòng chỉ nhắc một dòng để đỡ loãng */}
               {rows.length ? (
                 <div className="space-y-4">
                   {picks.map((r, i) => (
                     <KocCard key={r.creator_id} r={r} rank={i + 1} pick={pickBy.get(r.creator_id)} />
                   ))}
-                  {reserve.length > 0 && <h3 className="pt-4 text-[15px] font-semibold text-ink-muted">KOC dự phòng · {reserve.length}</h3>}
-                  {reserve.map((r, i) => (
-                    <KocCard key={r.creator_id} r={r} rank={picks.length + i + 1} />
-                  ))}
+                  {reserve.length > 0 && (
+                    <p className="text-[13px] text-ink-muted">
+                      Còn <b className="text-ink">{reserve.length}</b> KOC dự phòng đã qua vòng chấm điểm — nhắn cho mình nếu bạn muốn thay ai đó trong danh sách trên.
+                    </p>
+                  )}
                 </div>
               ) : (
                 <p className="rounded-2xl border border-line bg-white p-6 text-center text-ink-muted">
@@ -195,24 +234,16 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
             </>
           )}
         </div>
+
+        {/* ── Các lượt trao đổi tiếp theo (client: tin nhắn hiện ngay khi gửi) ── */}
+        <ChatThread
+          campaignId={id}
+          messages={c.messages}
+          action={sendMessage}
+          quick={["Tăng ngân sách lên 80 triệu", "Bỏ KOC đầu tiên, gợi ý người khác", "Vì sao chọn những KOC này?"]}
+        />
       </div>
 
-      {/* ── Composer (follow-up chat is not wired yet) ── */}
-      <div className="sticky bottom-0 bg-gradient-to-t from-page via-page to-transparent px-6 pb-5 pt-6">
-        <div className="mx-auto max-w-[980px] rounded-2xl border border-line bg-white px-4 py-3 shadow-sm">
-          <textarea
-            disabled
-            rows={2}
-            placeholder="Hỏi thêm về chiến dịch này… (sắp có)"
-            className="w-full resize-none bg-transparent text-[14px] outline-none placeholder:text-ink-muted"
-          />
-          <div className="flex justify-end">
-            <span className="grid h-8 w-8 place-items-center rounded-full bg-zinc-100 text-zinc-400">
-              <ArrowUp size={16} />
-            </span>
-          </div>
-        </div>
-      </div>
     </main>
   );
 }

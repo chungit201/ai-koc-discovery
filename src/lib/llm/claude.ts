@@ -37,7 +37,15 @@ function resolveCli(): string {
   return "claude";
 }
 const CLI = resolveCli();
-const TIMEOUT_MS = 90_000;
+/**
+ * Per-call ceiling (một chiến dịch gồm nhiều call: S3 1 call/10 KOC, S4 1 call/video, S5 1 call).
+ * Đo thực tế trên `api_calls`: S4 ~7s, S5 ~21s, nhưng S3 (10 KOC/call) avg 32s và đã thấy 67s —
+ * khi S3 chạy song song với việc tải khung hình S4 thì mốc 90s cũ bị vượt và cả pipeline chết.
+ */
+const TIMEOUT_MS = 240_000;
+/** Timeout thường là call chậm chứ không phải call lỗi → thử lại một lần trước khi bỏ. */
+const TIMEOUT_RETRIES = 1;
+const TIMEOUT_MESSAGE = "Claude CLI quá thời gian phản hồi";
 
 export interface ClaudeImage {
   media_type: "image/jpeg" | "image/png";
@@ -91,7 +99,7 @@ export async function claude(opts: {
   }
   const u = parsed.usage ?? {};
   const tokensIn = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
-  const modelId = Object.keys(parsed.modelUsage ?? {})[0] ?? model;
+  const modelId = pickModelId(parsed.modelUsage, model);
   if (modelId !== model) await rememberModelId(model, modelId);
   const result: ClaudeResult = {
     text: parsed.result ?? "",
@@ -107,6 +115,24 @@ export async function claude(opts: {
   if (parsed.is_error) throw new Error(result.text || "Claude CLI báo lỗi");
   await cache.replaceOne({ _id: key }, { text: result.text, model_id: modelId, created_at: new Date() }, { upsert: true });
   return result;
+}
+
+/**
+ * `modelUsage` có thể chứa nhiều model: ngoài model trả lời còn model phụ trợ của CLI
+ * (vd gọi `--model sonnet` vẫn thấy một dòng haiku). Lấy khoá khớp alias đã yêu cầu;
+ * nếu không có thì lấy model tiêu thụ nhiều token nhất. Ghi sai khoá này sẽ làm lệch
+ * `llm_models` và khoá cache của `ai_assessments`.
+ */
+function pickModelId(usage: Record<string, unknown> | undefined, alias: string): string {
+  const entries = Object.entries(usage ?? {});
+  if (!entries.length) return alias;
+  const match = entries.find(([id]) => id.includes(alias));
+  if (match) return match[0];
+  const tokens = (v: unknown) => {
+    const u = (v ?? {}) as Record<string, number>;
+    return (u.inputTokens ?? 0) + (u.outputTokens ?? 0) + (u.cacheReadInputTokens ?? 0) + (u.cacheCreationInputTokens ?? 0);
+  };
+  return entries.sort((a, b) => tokens(b[1]) - tokens(a[1]))[0][0];
 }
 
 /**
@@ -130,14 +156,27 @@ function lastResultLine(out: string): string {
   return lines[lines.length - 1] ?? out;
 }
 
-function run(args: string[], input: string): Promise<string> {
+/** Gọi CLI, thử lại khi quá thời gian (call chậm) nhưng không thử lại khi CLI báo lỗi thật. */
+async function run(args: string[], input: string): Promise<string> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await spawnCli(args, input);
+    } catch (err) {
+      const timedOut = err instanceof Error && err.message === TIMEOUT_MESSAGE;
+      if (!timedOut || attempt >= TIMEOUT_RETRIES) throw err;
+      console.warn(`[llm] call quá ${TIMEOUT_MS / 1000}s, thử lại lần ${attempt + 2}`);
+    }
+  }
+}
+
+function spawnCli(args: string[], input: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(CLI, args, { windowsHide: true });
     let out = "";
     let err = "";
     const timer = setTimeout(() => {
       child.kill();
-      reject(new Error("Claude CLI quá thời gian phản hồi"));
+      reject(new Error(TIMEOUT_MESSAGE));
     }, TIMEOUT_MS);
     child.stdout.on("data", (d) => (out += d));
     child.stderr.on("data", (d) => (err += d));

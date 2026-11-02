@@ -1,12 +1,13 @@
 "use client";
 
-import { AlertTriangle, ArrowLeft, Check, ChevronDown, Lightbulb, Loader2, Plus, Search, SlidersHorizontal, Sparkles, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, ChevronDown, HelpCircle, Lightbulb, Loader2, Plus, Search, SlidersHorizontal, Sparkles, X } from "lucide-react";
 import { useActionState, useEffect, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { createPortal } from "react-dom";
 import { confirmCampaign, previewCampaign, type CampaignFormState } from "@/app/actions/campaign";
 import { CAMPAIGN_CATEGORIES, PROMPT_EXAMPLES, PROMPT_MAX, PROMPT_MIN } from "@/lib/campaign";
 import { criteriaRows, type Criteria } from "@/lib/brief";
+import type { AskField, PlanQuestion } from "@/lib/plan";
 
 /** Primary CTA: "Chiến dịch mới" → brief (prompt or advanced filters) → AI confirm step → campaign. */
 export function DeepSearchButton({ variant = "sidebar" }: { variant?: "sidebar" | "header" }) {
@@ -242,6 +243,8 @@ function ConfirmStep({ preview, onEdit, onClose }: { preview: NonNullable<Campai
       </div>
 
       <div className="space-y-5 overflow-y-auto px-6 py-5">
+        {preview.plan.questions.length > 0 && <AskFields questions={preview.plan.questions} />}
+
         <table className="w-full text-[14px]">
           <thead>
             <tr className="border-b border-line text-left">
@@ -304,6 +307,56 @@ function ConfirmStep({ preview, onEdit, onClose }: { preview: NonNullable<Campai
         <ConfirmButton />
       </div>
     </form>
+  );
+}
+
+/**
+ * Câu hỏi lại của AI ở bước xác nhận. AI chỉ viết câu hỏi và chọn trường; **lựa chọn trả lời do
+ * code cung cấp** để không có giá trị nào do model bịa ra. Bỏ trống = giữ mặc định như trước.
+ */
+const QUICK: Record<AskField, { value: string; label: string }[]> = {
+  budget_total: [30e6, 50e6, 100e6].map((v) => ({ value: String(v), label: `${v / 1e6} triệu` })),
+  koc_count: [3, 5, 10].map((v) => ({ value: String(v), label: `${v} KOC` })),
+  category_id: CAMPAIGN_CATEGORIES.map((c) => ({ value: c.id, label: c.name })),
+  product_focus: [],
+};
+
+function AskFields({ questions }: { questions: PlanQuestion[] }) {
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  return (
+    <div className="space-y-4 rounded-xl border border-brand/30 bg-brand-soft/30 px-4 py-4">
+      <h3 className="flex items-center gap-2 text-[15px] font-semibold">
+        <HelpCircle size={16} className="text-brand" /> AI cần biết thêm
+      </h3>
+      {questions.map((q) => (
+        <div key={q.field}>
+          <p className="text-[13.5px] text-zinc-700">{q.question}</p>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {QUICK[q.field].map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => setAnswers((a) => ({ ...a, [q.field]: a[q.field] === o.value ? "" : o.value }))}
+                className={`rounded-full border px-3 py-1 text-[12.5px] ${
+                  answers[q.field] === o.value ? "border-brand bg-brand text-white" : "border-line bg-white text-zinc-600 hover:border-brand/40"
+                }`}
+              >
+                {o.label}
+              </button>
+            ))}
+            <input
+              value={answers[q.field] && QUICK[q.field].some((o) => o.value === answers[q.field]) ? "" : (answers[q.field] ?? "")}
+              onChange={(e) => setAnswers((a) => ({ ...a, [q.field]: e.target.value }))}
+              placeholder={q.field === "product_focus" ? "VD: kem chống nắng" : q.field === "budget_total" ? "hoặc nhập số tiền (₫)" : "hoặc nhập"}
+              inputMode={q.field === "product_focus" || q.field === "category_id" ? "text" : "numeric"}
+              className="h-8 min-w-[9rem] flex-1 rounded-full border border-line bg-white px-3 text-[12.5px] outline-none focus:border-brand"
+            />
+          </div>
+          <input type="hidden" name={`answer_${q.field}`} value={answers[q.field] ?? ""} />
+        </div>
+      ))}
+      <p className="text-[12px] text-ink-muted">Bỏ trống cũng được — AI sẽ chạy các bước không cần thông tin này.</p>
+    </div>
   );
 }
 

@@ -20,6 +20,7 @@ export const C = {
   llmModels: "llm_models", // alias ("haiku") → full model id last seen, for version-aware cache keys
   aiAssessments: "ai_assessments", // per-KOC AI analyses keyed by (creator, content_hash, model_id, prompt_version) // identical LLM prompts → cached answer (0 tokens on repeat)
   videoMedia: "video_media", // resolved playable MP4 links per video (cache, refreshed after a few hours)
+  creatorChats: "creator_chats", // hội thoại hỏi đáp ở trang hồ sơ từng KOC (tách khỏi `creators` vì doc đó do crawler ghi đè)
   stageItems: "stage_items",
 } as const;
 

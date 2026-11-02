@@ -44,6 +44,44 @@ Chỉ mô tả điều THẤY được, không suy đoán doanh số. Trả về
 "summary": 1 câu tiếng Việt ≤ 25 từ}`;
 
 /**
+ * Phân tích MỘT video: 4 khung hình + tiêu đề → nhận định. Kết quả **không phụ thuộc chiến dịch**
+ * nên cache theo (video_id, hash khung hình + tiêu đề, model, phiên bản prompt) và dùng lại ở mọi
+ * nơi — S4 của chiến dịch lẫn phần hỏi đáp ở trang hồ sơ KOC đều đi qua đây để cùng một khoá cache.
+ */
+export async function analyseVideo(
+  videoId: string,
+  title: string,
+): Promise<{ assessment: Assessment<VideoAnalysis>; times: number[]; cost_usd: number; tokens_in: number; tokens_out: number; cached: boolean }> {
+  const sheet = await frameSheet(videoId);
+  const hash = contentHash({ sheet: sheet.base64.length, sheetHead: sheet.base64.slice(0, 2048), title });
+  const modelId = await resolvedModelId(MODEL);
+  const hit = (await getAssessments<VideoAnalysis>([assessmentId("video_analysis", videoId, hash, modelId, S4_PROMPT_VERSION)])).get(
+    assessmentId("video_analysis", videoId, hash, modelId, S4_PROMPT_VERSION),
+  );
+  if (hit) return { assessment: hit, times: sheet.times, cost_usd: 0, tokens_in: 0, tokens_out: 0, cached: true };
+
+  const res = await claude({
+    system: S4_SYSTEM,
+    prompt: `Tiêu đề: ${title}\nThời điểm 4 khung (giây): ${sheet.times.join(", ")}`,
+    model: MODEL,
+    purpose: "s4-video",
+    images: [{ media_type: "image/jpeg", data: sheet.base64 }],
+  });
+  const assessment: Assessment<VideoAnalysis> = {
+    _id: assessmentId("video_analysis", videoId, hash, res.model_id, S4_PROMPT_VERSION),
+    kind: "video_analysis",
+    subject_id: videoId,
+    content_hash: hash,
+    model_id: res.model_id,
+    prompt_version: S4_PROMPT_VERSION,
+    result: sanitize(parseObject(res.text)),
+    created_at: new Date(),
+  };
+  await saveAssessments([assessment]);
+  return { assessment, times: sheet.times, cost_usd: res.cost_usd, tokens_in: res.tokens_in, tokens_out: res.tokens_out, cached: false };
+}
+
+/**
  * Which videos S4 looks at: top KOCs (S3 order, or S2 order for the early prefetch) × 2 videos —
  * best on-topic by views + best by revenue.
  */
@@ -53,15 +91,18 @@ async function pickVideos(campaignId: string, crit: Criteria, order: "s3" | "s2"
   // Only KOCs S5 could pick (min cost within the per-KOC cap), so no recommendation is left unwatched
   const camp = await db.collection(C.campaigns).findOne({ _id: campaignId as never });
   const cap = camp ? perKocCap(camp) : Infinity;
-  const top = (
-    await db
-      .collection(C.campaignScores)
-      .find({ campaign_id: campaignId, shortlisted: true })
-      .sort(order === "s3" ? { s3_rank: 1, rank: 1 } : { rank: 1 })
-      .toArray()
-  )
-    .filter((t) => !(t.cost_estimate?.min > cap))
-    .slice(0, S4_KOCS(crit.koc_count) + extraKocs);
+  const ranked = await db
+    .collection(C.campaignScores)
+    .find({ campaign_id: campaignId, shortlisted: true })
+    .sort(order === "s3" ? { s3_rank: 1, rank: 1 } : { rank: 1 })
+    .toArray();
+  // KOC người dùng chỉ đích danh trong hội thoại ("xem video của người này") luôn được xem,
+  // kể cả khi họ ngoài top hoặc vượt trần chi phí — đó là yêu cầu trực tiếp, không phải xếp hạng.
+  const asked = new Set<string>((camp?.deep_creator_ids as string[]) ?? []);
+  const top = [
+    ...ranked.filter((t) => asked.has(String(t.creator_id))),
+    ...ranked.filter((t) => !asked.has(String(t.creator_id)) && !(t.cost_estimate?.min > cap)).slice(0, S4_KOCS(crit.koc_count) + extraKocs),
+  ];
   const picks: Pick[] = [];
   for (const t of top) {
     const vids = await db.collection(C.videos).find({ creator_id: t.creator_id }).project<{ _id: string; title?: string; views?: number; revenue?: number }>({ title: 1, views: 1, revenue: 1 }).toArray();
@@ -122,37 +163,12 @@ export async function runS4(campaignId: string) {
 
   await runPool(picks, PARALLEL, async (pk) => {
     try {
-      const sheet = await frameSheet(pk.video_id);
-      const hash = contentHash({ sheet: sheet.base64.length, sheetHead: sheet.base64.slice(0, 2048), title: pk.title });
-      const id = assessmentId("video_analysis", pk.video_id, hash, modelId, S4_PROMPT_VERSION);
-      const hit = (await getAssessments<VideoAnalysis>([id])).get(id);
-      if (hit) {
-        fromCache++;
-        results.set(pk.video_id, { ...hit, times: sheet.times });
-        return;
-      }
-      const res = await claude({
-        system: S4_SYSTEM,
-        prompt: `Tiêu đề: ${pk.title}\nThời điểm 4 khung (giây): ${sheet.times.join(", ")}`,
-        model: MODEL,
-        purpose: "s4-video",
-        images: [{ media_type: "image/jpeg", data: sheet.base64 }],
-      });
-      tokensIn += res.tokens_in;
-      tokensOut += res.tokens_out;
-      cost += res.cost_usd;
-      const a: Assessment<VideoAnalysis> = {
-        _id: assessmentId("video_analysis", pk.video_id, hash, res.model_id, S4_PROMPT_VERSION),
-        kind: "video_analysis",
-        subject_id: pk.video_id,
-        content_hash: hash,
-        model_id: res.model_id,
-        prompt_version: S4_PROMPT_VERSION,
-        result: sanitize(parseObject(res.text)),
-        created_at: new Date(),
-      };
-      await saveAssessments([a]);
-      results.set(pk.video_id, { ...a, times: sheet.times });
+      const out = await analyseVideo(pk.video_id, pk.title);
+      if (out.cached) fromCache++;
+      tokensIn += out.tokens_in;
+      tokensOut += out.tokens_out;
+      cost += out.cost_usd;
+      results.set(pk.video_id, { ...out.assessment, times: out.times });
     } catch (err) {
       failed.push(pk.video_id);
       console.error("S4 video failed", pk.video_id, err instanceof Error ? err.message : err);

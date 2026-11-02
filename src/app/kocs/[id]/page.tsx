@@ -30,6 +30,7 @@ import { KpiCard, Pill, SectionCard } from "@/components/kit";
 import { CATEGORY_NAMES, getKoc } from "@/lib/data/queries";
 import { compact, pct, tiktokProfile, tiktokVideo, vnd } from "@/lib/format";
 import { contactItems, type ContactItem } from "@/lib/contact";
+import { AskBar, type ChatThreadView } from "@/components/ask-bar";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- Mongo docs are schemaless here */
 
@@ -45,7 +46,7 @@ export default async function KocDetail({
   const showAll = { videos: sp.all === "videos", products: sp.all === "products" };
   const data = await getKoc(id);
   if (!data) notFound();
-  const { creator: c, metrics, products, videos } = data as { creator: any; metrics: any[]; products: any[]; videos: any[] };
+  const { creator: c, metrics, products, videos, threads } = data as { creator: any; metrics: any[]; products: any[]; videos: any[]; threads: ChatThreadView[] };
 
   const pick = (scope: string, source: string) => metrics.find((m) => m.category_scope === scope && m.source === source);
   const all = pick("all", "web:creator/detail/total");
@@ -300,6 +301,22 @@ export default async function KocDetail({
           </SectionCard>
         </div>
       </div>
+
+      {/* Thanh hỏi AI nổi ở đáy màn hình — trả lời từ dữ liệu đã thu thập, kèm bằng chứng */}
+      <AskBar
+        subjectId={id}
+        subjectName={c.nickname || c.handle}
+        subjectHandle={c.handle}
+        threads={threads}
+        placeholder={`Hỏi về ${c.nickname || c.handle}: bán danh mục nào, doanh thu có ổn định…`}
+        suggestions={[
+          "Đánh giá khả năng bán hàng, so với creator cùng tầm thế nào?",
+          "Chủ yếu bán danh mục và sản phẩm nào?",
+          "Chất lượng nội dung và cách review sản phẩm ra sao?",
+          "Doanh thu có ổn định trong 30 ngày không?",
+          "Chi phí hợp tác ước tính bao nhiêu một video?",
+        ]}
+      />
     </div>
   );
 }

@@ -9,6 +9,8 @@ async function getDb() {
   return getMongo();
 }
 import { C } from "../db/collections";
+import { defaultPlan, type BriefPlan } from "../plan";
+import type { ChatMessage } from "../chat";
 
 export const CATEGORY_NAMES: Record<string, string> = {
   "601450": "Làm đẹp",
@@ -259,6 +261,13 @@ export interface CampaignView {
   budget_min_per_koc: number | null;
   koc_count: number | null;
   status: string;
+  /** Hội thoại nhiều lượt trên chiến dịch này (lượt đầu = brief, nằm ở `prompt`). */
+  messages: ChatMessage[];
+  /**
+   * Tiến độ để hiển thị ở danh sách. `status` một mình không đủ: "scored" mới xong S2,
+   * còn chiến dịch hoàn tất là "recommended" (do S5 đặt).
+   */
+  progress: "done" | "running" | "halted";
   created_at: Date;
 }
 
@@ -274,8 +283,20 @@ const toCampaign = (d: Record<string, unknown>): CampaignView => ({
   budget_min_per_koc: numOrNull(d.budget_min_per_koc),
   koc_count: numOrNull(d.koc_count),
   status: String(d.status),
+  messages: ((d.messages as ChatMessage[]) ?? []).slice(-40),
+  progress: campaignProgress(d),
   created_at: d.created_at as Date,
 });
+
+/** Giống quy ước ở trang chi tiết: xong khi có S5; dừng khi lỗi hoặc không còn tiến trình giữ lease. */
+function campaignProgress(d: Record<string, unknown>): CampaignView["progress"] {
+  if ((d.pipeline as { stage?: string } | undefined)?.stage === "done") return "done";
+  if (d.pipeline_error) return "halted";
+  const lease = (d.pipeline as { lease_until?: Date } | undefined)?.lease_until;
+  const alive = lease && new Date(lease).getTime() > Date.now();
+  const young = Date.now() - new Date((d.created_at as Date) ?? 0).getTime() <= 30_000;
+  return alive || young ? "running" : "halted";
+}
 
 /** Short title: the category for structured briefs; prompt-only briefs show their text in their own block. */
 export const campaignTitle = (c: CampaignView) => c.category_name ?? "Chiến dịch từ mô tả";
@@ -350,6 +371,10 @@ export async function getShortlist(
   campaignId: string,
 ): Promise<{
   summary: ScoringSummary | null;
+  /** Kế hoạch AI lập cho chiến dịch này — quyết định các bước hiển thị và bước nào được chạy. */
+  plan: BriefPlan;
+  /** Pipeline đã chạy hết kế hoạch (không suy từ S5: kế hoạch có thể không có bước đề xuất). */
+  finished: boolean;
   screened: boolean;
   videoDone: boolean;
   s3: { kocs: number; duration_ms: number } | null;
@@ -368,7 +393,11 @@ export async function getShortlist(
   rows: ShortlistRow[];
 }> {
   const db = await getDb();
-  const camp = await db.collection(C.campaigns).findOne({ _id: campaignId as never }, { projection: { scoring: 1, s3: 1, s4: 1, s5: 1, pipeline_error: 1, pipeline: 1, created_at: 1 } });
+  const camp = await db
+    .collection(C.campaigns)
+    .findOne({ _id: campaignId as never }, { projection: { scoring: 1, s3: 1, s4: 1, s5: 1, plan: 1, criteria: 1, pipeline_error: 1, pipeline: 1, created_at: 1 } });
+  const plan: BriefPlan = (camp?.plan as BriefPlan) ?? defaultPlan((camp?.criteria as Record<string, never>) ?? {});
+  const finished = camp?.pipeline?.stage === "done";
   const screened = Boolean(camp?.s3);
   const videoDone = Boolean(camp?.s4);
   // After S3 the order is the content-screened ranking; before it, the S2 ranking
@@ -414,6 +443,8 @@ export async function getShortlist(
   });
   return {
     summary: (camp?.scoring as ScoringSummary) ?? null,
+    plan,
+    finished,
     screened,
     videoDone,
     s3: camp?.s3 ? { kocs: camp.s3.kocs, duration_ms: camp.s3.duration_ms } : null,
@@ -421,7 +452,7 @@ export async function getShortlist(
     error: (camp?.pipeline_error as string) ?? null,
     // Not finished, no runner holding the lease, and past the start-up grace → interrupted
     stalled:
-      !camp?.s5 &&
+      !finished &&
       !camp?.pipeline_error &&
       !(camp?.pipeline?.lease_until && new Date(camp.pipeline.lease_until).getTime() > Date.now()) &&
       Date.now() - new Date(camp?.created_at ?? 0).getTime() > 30_000,
@@ -461,5 +492,12 @@ export async function getKoc(id: string) {
     ])
     .toArray();
   const videos = await db.collection(C.videos).find({ creator_id: id }).sort({ revenue: -1, views: -1 }).limit(30).toArray();
-  return { creator, metrics, products, videos };
+  // Các cuộc trò chuyện hỏi đáp về chính KOC này (mỗi cuộc là một doc trong `creator_chats`)
+  const threads = (await db.collection(C.creatorChats).find({ creator_id: id }).sort({ updated_at: -1 }).limit(20).toArray()).map((t) => ({
+    id: String(t._id),
+    title: String(t.title ?? "Cuộc trò chuyện"),
+    updated_at: (t.updated_at as Date) ?? (t.created_at as Date) ?? new Date(),
+    messages: ((t.messages as ChatMessage[]) ?? []).slice(-40),
+  }));
+  return { creator, metrics, products, videos, threads };
 }

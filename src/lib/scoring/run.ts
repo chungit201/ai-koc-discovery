@@ -3,6 +3,7 @@ import type { Db } from "mongodb";
 import { getDb } from "../db/mongo";
 import { C } from "../db/collections";
 import { DEFAULT_CRITERIA, type Criteria } from "../brief";
+import type { BriefPlan } from "../plan";
 import { compact, pct, vnd } from "../format";
 import { SCORING_VERSION, clamp01, estimateCost, focusPattern, percentileOf, weightsFor, type ScoreKey } from "./rules";
 
@@ -15,9 +16,10 @@ const COSMETICS = "848776,848648";
 export const SHORTLIST_SIZE = (n: number) => Math.min(60, Math.max(15, n * 3));
 const MIN_VIDEOS = 3;
 
+/** `campaign_id: null` = bằng chứng về KOC không gắn chiến dịch nào (xem `evidence/creator.ts`). */
 export interface Evidence {
   _id: string;
-  campaign_id: string;
+  campaign_id: string | null;
   creator_id: string;
   key: string;
   type: "metric" | "product" | "video" | "audience" | "cost";
@@ -240,14 +242,17 @@ export async function scoreCampaign(campaignId: string) {
       eligible: true,
       scores: Object.fromEntries(Object.entries(scores).map(([k, v]) => [k, Math.round(v * 1000) / 10])),
       total: Math.round(total * 1000) / 10,
+      revenue: r.list.revenue ?? 0, // dùng khi người dùng muốn xếp theo doanh thu
       cost_estimate: r.cost,
       evidence_ids: ids,
       focus_counts: { products: focusProds.length, videos: focusVideos.length },
     });
   }
 
-  // rank + shortlist
-  scoreDocs.sort((a, b) => (b.total as number) - (a.total as number));
+  // rank + shortlist — mặc định theo điểm phù hợp, hoặc theo doanh thu nếu người dùng yêu cầu vậy
+  const rankBy = (camp.plan as BriefPlan | undefined)?.rank_by ?? "fit";
+  const rankKey = rankBy === "revenue" ? "revenue" : "total";
+  scoreDocs.sort((a, b) => (b[rankKey] as number) - (a[rankKey] as number));
   const shortlistSize = SHORTLIST_SIZE(crit.koc_count);
   scoreDocs.forEach((d, i) => Object.assign(d, { rank: i + 1, shortlisted: i < shortlistSize }));
 
@@ -274,11 +279,18 @@ export async function scoreCampaign(campaignId: string) {
     shortlisted: Math.min(shortlistSize, eligible.length),
     evidence: evidenceDocs.length,
     excluded_by_reason: reasonCounts,
+    rank_by: rankBy,
     tokens: 0,
     duration_ms: Date.now() - started,
     scored_at: now,
   };
-  await db.collection(C.campaigns).updateOne({ _id: campaignId as never }, { $set: { status: "scored", scoring: summary } });
+  // Chấm điểm lại thì mọi bước sau không còn giá trị: `campaign_scores` vừa bị thay mới nên phần
+  // làm giàu của S3/S4 (s3/s4, s3_rank/s4_rank, điểm tổng) đã mất, và điểm S2 mới làm các điểm
+  // tổng cũ sai. Xoá summary để pipeline dựng lại từ cache `ai_assessments` (0 token) thay vì
+  // bỏ qua và âm thầm tụt về thứ hạng chỉ-S2 — quan trọng khi người dùng đổi tiêu chí giữa chừng.
+  await db
+    .collection(C.campaigns)
+    .updateOne({ _id: campaignId as never }, { $set: { status: "scored", scoring: summary }, $unset: { s3: "", s4: "", s5: "" } });
   return summary;
 }
 

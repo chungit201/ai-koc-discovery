@@ -68,7 +68,9 @@ export async function runS5(campaignId: string) {
   const creators = new Map(
     (await db.collection(C.creators).find({ _id: { $in: rows.map((r) => r.creator_id) as never[] } }, { projection: { mcn: 1 } }).toArray()).map((c) => [String(c._id), c]),
   );
-  const cands: Cand[] = rows.map((r) => ({
+  // KOC người dùng đã loại trong hội thoại thì không bao giờ được chọn lại
+  const excluded = new Set<string>((camp.excluded_creator_ids as string[]) ?? []);
+  const cands: Cand[] = rows.filter((r) => !excluded.has(String(r.creator_id))).map((r) => ({
     creator_id: String(r.creator_id),
     mcn: (creators.get(String(r.creator_id))?.mcn as string) || null,
     score: r.s4_total ?? r.s3_total ?? r.total,
@@ -98,11 +100,21 @@ export async function runS5(campaignId: string) {
   const lowest = Math.min(...picked.map((c) => c.score));
   const skipped = overCap.filter((c) => !picked.length || c.score > lowest).slice(0, 3);
 
-  // ── 2. Allocate: start at min, spread the rest by score up to min(max, cap) ──
+  // ── 2. Allocate: start at the floor, spread the rest by score up to min(max, cap) ──
   const round = (v: number) => Math.round(v / STEP) * STEP;
-  let alloc = picked.map((c) => c.cost.min);
+  /**
+   * Sàn mỗi KOC = "ngân sách tối thiểu/KOC" trong brief: người bán đã nêu mức sàn nên
+   * không đề xuất thấp hơn, dù chi phí ước tính của KOC rẻ hơn. Bỏ sàn khi tổng ngân sách
+   * không đủ cho tất cả KOC đã chọn ở mức đó (lúc đó giá ước tính là mốc duy nhất).
+   */
+  const briefMin: number = camp.budget_min_per_koc ?? 0;
+  let floorPer = total && briefMin > 0 ? Math.min(briefMin, cap) : 0;
+  const floorOf = (c: Cand) => Math.max(c.cost.min, floorPer);
+  if (total && picked.reduce((s, c) => s + floorOf(c), 0) > total) floorPer = 0;
+
+  let alloc = picked.map(floorOf);
   if (total) {
-    let spare = total - minSum;
+    let spare = total - alloc.reduce((a, b) => a + b, 0);
     for (let k = 0; k < 6 && spare > STEP; k++) {
       const head = picked.map((c, i) => Math.max(0, Math.min(c.cost.max, cap) - alloc[i]));
       const w = picked.map((c, i) => (head[i] > 0 ? c.score : 0));
@@ -117,11 +129,11 @@ export async function runS5(campaignId: string) {
       spare -= used;
     }
   } else {
-    alloc = picked.map((c) => Math.min(c.cost.mid, cap));
+    alloc = picked.map((c) => Math.max(floorOf(c), Math.min(c.cost.mid, cap)));
   }
-  const budgets = alloc.map((a, i) => Math.max(picked[i].cost.min, round(a)));
+  const budgets = alloc.map((a, i) => Math.max(floorOf(picked[i]), round(a)));
   // Rounding must never push the plan over budget
-  if (total) for (let i = budgets.length - 1; i >= 0 && budgets.reduce((a, b) => a + b, 0) > total; i--) budgets[i] = Math.max(picked[i].cost.min, budgets[i] - STEP);
+  if (total) for (let i = budgets.length - 1; i >= 0 && budgets.reduce((a, b) => a + b, 0) > total; i--) budgets[i] = Math.max(floorOf(picked[i]), budgets[i] - STEP);
 
   // ── 3. Reasons (one Haiku call; llm_cache makes reruns free) ──
   const evDocs = await db
@@ -173,6 +185,7 @@ export async function runS5(campaignId: string) {
     budget_total: total,
     allocated: budgets.reduce((a, b) => a + b, 0),
     cap: Number.isFinite(cap) ? cap : null,
+    floor_per_koc: floorPer || null,
     min_score: MIN_SCORE,
     wanted: n,
     skipped_over_cap: skipped.map((c) => ({ creator_id: c.creator_id, score: c.score, cost_min: c.cost.min })),

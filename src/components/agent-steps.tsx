@@ -5,6 +5,8 @@ import { useState } from "react";
 import { useFormStatus } from "react-dom";
 
 export interface AgentStep {
+  /** Khoá ổn định: nhãn đổi theo trạng thái ("Đang…" → "Đã…") nên không dùng nhãn làm key. */
+  id: string;
   label: string;
   status: "done" | "running" | "pending" | "error";
   detail?: string;
@@ -40,7 +42,7 @@ export function AgentSteps({ steps, done, thought }: { steps: AgentStep[]; done:
       >
         <ol className="space-y-1.5 text-[12.5px]">
           {steps.map((s) => (
-            <li key={s.label} className={`flex items-center gap-2 ${s.status === "pending" ? "text-ink-muted" : ""}`}>
+            <li key={s.id} className={`flex items-center gap-2 ${s.status === "pending" ? "text-ink-muted" : ""}`}>
               <StepIcon status={s.status} /> {s.label}
             </li>
           ))}
@@ -49,7 +51,7 @@ export function AgentSteps({ steps, done, thought }: { steps: AgentStep[]; done:
 
       {started.map((s) => (
         <Collapsible
-          key={s.label}
+          key={s.id}
           defaultOpen
           tinted
           head={

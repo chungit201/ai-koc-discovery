@@ -20,6 +20,10 @@
     "db:audit": "tsx --env-file=.env.local scripts/data-audit.ts",
     "avatars": "tsx --env-file=.env.local scripts/fetch-avatars.ts",
     "resume": "tsx --conditions=react-server --env-file=.env.local scripts/resume.ts",
+    "test:koc": "tsx --conditions=react-server --env-file=.env.local scripts/test-koc-chat.ts",
+    "koc:chat": "tsx --conditions=react-server --env-file=.env.local scripts/koc-chat.ts",
+    "chat": "tsx --conditions=react-server --env-file=.env.local scripts/chat.ts",
+    "bench": "tsx --conditions=react-server --env-file=.env.local scripts/bench.ts",
     "s5": "tsx --conditions=react-server --env-file=.env.local scripts/s5.ts",
     "top-kocs": "tsx --env-file=.env.local scripts/top-kocs.ts"
   },

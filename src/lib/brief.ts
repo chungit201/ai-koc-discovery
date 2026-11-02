@@ -1,5 +1,6 @@
 // Campaign criteria shared by the brief parser (server) and the confirm step (client).
 import { CAMPAIGN_CATEGORIES } from "./campaign";
+import type { BriefPlan } from "./plan";
 
 export type Source = "prompt" | "form" | "default";
 
@@ -26,6 +27,7 @@ export interface BriefPreview {
   sources: CriteriaSources;
   suggestions: string[]; // AI advice (never data)
   warnings: string[]; // code-computed consistency checks
+  plan: BriefPlan; // các bước AI sẽ chạy cho đúng yêu cầu này
   llm: { used: boolean; tokens_in: number; tokens_out: number; cost_usd: number; cached: boolean; latency_ms: number } | null;
 }
 

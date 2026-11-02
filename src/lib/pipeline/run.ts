@@ -5,6 +5,7 @@ import { scoreCampaign } from "../scoring/run";
 import { runS3 } from "./s3-content";
 import { prefetchS4Frames, runS4 } from "./s4-video";
 import { runS5 } from "./s5-recommend";
+import { defaultPlan, type BriefPlan, type Capability } from "../plan";
 
 /**
  * Resumable campaign pipeline S2 → S3 → S4 → S5.
@@ -40,21 +41,23 @@ export async function runPipeline(campaignId: string, opts: { force?: boolean } 
   try {
     let c = await col.findOne({ _id: campaignId as never });
     if (!c) return;
+    // Chỉ chạy các bước AI đã lập kế hoạch (chiến dịch cũ không có plan → chạy đủ như trước)
+    const planned = new Set<Capability>(((c.plan as BriefPlan | undefined)?.steps ?? defaultPlan(c.criteria ?? {}).steps).map((s) => s.capability));
     if (!c.scoring) {
       await mark("s2");
       await scoreCampaign(campaignId);
     }
     c = await col.findOne({ _id: campaignId as never });
-    if (!c?.s4) void prefetchS4Frames(campaignId).catch(() => undefined); // keyframes download alongside S3
-    if (!c?.s3) {
+    if (planned.has("analyse_videos") && !c?.s4) void prefetchS4Frames(campaignId).catch(() => undefined); // keyframes download alongside S3
+    if (planned.has("screen_content") && !c?.s3) {
       await mark("s3");
       await runS3(campaignId);
     }
-    if (!c?.s4) {
+    if (planned.has("analyse_videos") && !c?.s4) {
       await mark("s4");
       await runS4(campaignId);
     }
-    if (!c?.s5) {
+    if (planned.has("recommend") && !c?.s5) {
       await mark("s5");
       await runS5(campaignId);
     }
@@ -78,7 +81,8 @@ export async function resumeUnfinished() {
   const since = new Date(Date.now() - 7 * 86_400_000);
   const todo = await db
     .collection(C.campaigns)
-    .find({ s5: { $exists: false }, pipeline_error: { $exists: false }, created_at: { $gte: since } }, { projection: { _id: 1 } })
+    // "xong" = pipeline chạy hết kế hoạch, không phải "có s5" — kế hoạch có thể không gồm bước đề xuất
+    .find({ "pipeline.stage": { $ne: "done" }, pipeline_error: { $exists: false }, created_at: { $gte: since } }, { projection: { _id: 1 } })
     .toArray();
   if (todo.length) console.log(`[pipeline] tiếp tục ${todo.length} chiến dịch dở dang`);
   for (const c of todo) await runPipeline(String(c._id), { force: true });

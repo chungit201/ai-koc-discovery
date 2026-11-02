@@ -1,15 +1,24 @@
-import { ChevronRight, Clock, CheckCircle2 } from "lucide-react";
+import { ChevronRight, Loader2, CheckCircle2, PauseCircle } from "lucide-react";
 import Link from "next/link";
+import { AutoRefresh } from "@/components/auto-refresh";
 import { DeepSearchButton } from "@/components/deep-search-button";
 import { Pill } from "@/components/kit";
 import { campaignTitle, listCampaigns, promptPreview } from "@/lib/data/queries";
 import { fmtM } from "@/lib/campaign";
 import { dateTime } from "@/lib/format";
 
+const PROGRESS = {
+  done: { text: "Đã có đề xuất", tone: "green", icon: CheckCircle2 },
+  running: { text: "Đang xử lý", tone: "blue", icon: Loader2 },
+  halted: { text: "Tạm dừng", tone: "amber", icon: PauseCircle },
+} as const;
+
 export default async function CampaignsPage() {
   const campaigns = await listCampaigns();
   return (
     <main className="mx-auto w-full max-w-[1440px] space-y-6 px-8 py-8 xl:px-10">
+      {/* có chiến dịch đang chạy → tự làm mới để nhãn tiến độ không bị đứng */}
+      {campaigns.some((c) => c.progress === "running") && <AutoRefresh seconds={6} />}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-[26px] font-bold tracking-tight">Chiến dịch</h1>
@@ -24,8 +33,8 @@ export default async function CampaignsPage() {
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-[15px] font-semibold">{campaignTitle(c)}</span>
-                <Pill tone={c.status === "scored" ? "green" : "amber"} icon={c.status === "scored" ? CheckCircle2 : Clock}>
-                  {c.status === "scored" ? "Đã có đề xuất" : "Chờ chấm điểm"}
+                <Pill tone={PROGRESS[c.progress].tone} icon={PROGRESS[c.progress].icon}>
+                  {PROGRESS[c.progress].text}
                 </Pill>
               </div>
               {promptPreview(c) && <div className="mt-1 text-[13px] text-zinc-700">“{promptPreview(c)}”</div>}
