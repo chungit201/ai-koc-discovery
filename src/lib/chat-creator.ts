@@ -150,7 +150,7 @@ async function aiNotes(creatorId: string): Promise<string> {
  * "chất lượng nội dung ra sao" lại nhận đúng bản đánh giá tổng quan). Hỏi lại **đúng câu đó** mới
  * là 0 token; phần đắt tiền (phân tích video) vẫn cache riêng theo video nên không trả lại.
  */
-export const ANSWER_PROMPT_VERSION = "koc-answer-v9";
+export const ANSWER_PROMPT_VERSION = "koc-answer-v11";
 
 /**
  * **ĐANG TẮT CACHE CÂU TRẢ LỜI** (2026-11-02) — giai đoạn đang chỉnh chất lượng phân tích.
@@ -172,6 +172,7 @@ const DATA_LABEL: Record<DataBlockId, string> = {
   top_products: "bảng top 10 sản phẩm bán chạy kèm doanh thu và tỉ trọng",
   peers: "danh sách KOC cùng quy mô follower để đối chuẩn",
   videos: "các video AI đã xem kèm nhận định",
+  top_videos: "bảng video nhiều lượt xem nhất kèm lượt thích, doanh thu và cờ quảng cáo",
 };
 
 const HIGHLIGHTS_SYSTEM = `[${ANSWER_PROMPT_VERSION}] Bạn trả lời câu hỏi của người bán về một KOC TikTok mỹ phẩm Việt Nam.
@@ -184,6 +185,7 @@ Trong nội dung chuỗi JSON KHÔNG được dùng dấu nháy kép (trích tê
 **BẠN TỰ DỰNG BỐ CỤC BÀI TRẢ LỜI** — không có khuôn cố định. Câu hỏi đơn giản thì 1 đoạn văn ngắn là đủ;
 câu cần phân tích sâu thì mới chia tiêu đề, chèn bảng, liệt kê. Chỉ chèn bảng khi bảng đó thực sự trả lời câu hỏi.
 Khối ĐẦU TIÊN luôn là một "para" trả lời thẳng câu hỏi trong 1-2 câu; đừng mở đầu bằng tiêu đề.
+Khi người bán hỏi thẳng "bán danh mục nào" / "bán sản phẩm nào" thì PHẢI chèn bảng tương ứng (categories và/hoặc top_products) nếu nó có trong danh sách bảng được phép — họ muốn thấy cả danh sách, không chỉ 3 cái tên trong đoạn văn.
 **TOÀN BỘ nội dung người dùng đọc nằm ở "blocks"** — "blocks" rỗng nghĩa là không trả lời gì cả.
 Mọi con số chỉ được viết trong "para"/"bullets" và PHẢI kèm "evidence_ids"; câu có số mà thiếu evidence_ids sẽ bị xoá khỏi câu trả lời.
 Ví dụ câu hỏi đơn giản ("khán giả là ai?") chỉ cần:
@@ -209,13 +211,24 @@ Trả về DUY NHẤT 1 object JSON:
  *
  * Lưu ý: `\b` không khớp tiếng Việt có dấu nên các mẫu dưới đây không dùng `\b`.
  */
+/**
+ * Hỏi **liệt kê video**, khác với hỏi *chất lượng nội dung*: cái này trả lời được bằng bảng xếp
+ * hạng từ DB, 0 token, không cần bước "AI xem khung hình". Cố ý KHÔNG khớp chữ "video" trần —
+ * "bao nhiêu một video" là đơn vị tính giá, kéo bảng video ra đó là nhiễu (bẫy #5 trong handover).
+ */
+const VIDEO_LIST_Q = /video nào|top video|video nổi bật|video hiệu quả|video nhiều (view|lượt)|danh sách video|video.{0,10}(nhiều|cao) nhất/i;
+
 const EVIDENCE_TOPICS: { re: RegExp; keys: string[] }[] = [
   { re: /ổn định|đều|thất thường|bấp bênh|duy trì|liên tục|bao nhiêu ngày|theo ngày/i, keys: ["consistency", "revenue", "sales"] },
   { re: /tương tác|engagement|like|lượt thích|bình luận|comment|chia sẻ/i, keys: ["engagement", "views", "followers"] },
   { re: /lượt xem|view|độ phủ|reach/i, keys: ["views", "engagement"] },
-  { re: /so (với|sánh)|cùng tầm|cùng quy mô|đối chuẩn|xếp hạng|hơn ai|thứ mấy|mặt bằng/i, keys: ["peer_revenue", "peer_engagement", "peer_top"] },
-  { re: /bán hàng|doanh thu|doanh số|hiệu suất|bán được|gmv|chuyển đổi|live/i, keys: ["revenue", "sales", "live_conversion", "channel_mix"] },
-  { re: /danh mục|mặt hàng|bán gì|bán chạy|sản phẩm/i, keys: ["category_mix", "subcategory_mix", "products", "brand_focus"] },
+  { re: /so (với|sánh)|cùng tầm|cùng quy mô|đối chuẩn|xếp hạng|hơn ai|thứ mấy|mặt bằng/i, keys: ["peer_revenue", "peer_engagement", "peer_live", "peer_top"] },
+  { re: VIDEO_LIST_Q, keys: ["top_videos", "videos", "engagement"] },
+  { re: /bán hàng|doanh thu|doanh số|hiệu suất|bán được|gmv|chuyển đổi|live/i, keys: ["revenue", "sales", "orders", "live_conversion", "channel_mix"] },
+  { re: /danh mục|mặt hàng|bán gì|bán chạy|sản phẩm/i, keys: ["category_mix", "subcategory_mix", "products", "brand_focus", "price_range", "orders"] },
+  // Giá SẢN PHẨM KOC bán, khác hẳn chi phí thuê KOC (`cost`) bên dưới
+  { re: /tầm giá|khoảng giá|đơn giá|giá sản phẩm|giá bán|hàng (cao cấp|bình dân)|combo/i, keys: ["price_range", "orders", "products"] },
+  { re: /bao nhiêu đơn|số đơn|đơn hàng|lượng bán/i, keys: ["orders", "sales", "products"] },
   { re: /thương hiệu|brand|phụ thuộc|độc lập/i, keys: ["brand_focus", "independence", "products"] },
   { re: /liên hệ|liên lạc|contact|email|zalo|số điện thoại|inbox/i, keys: ["contact"] },
   { re: /mcn|công ty|đại diện|quản lý|follower|người theo dõi|quy mô/i, keys: ["followers", "contact"] },
@@ -597,16 +610,22 @@ export async function* analyseCreatorStream(creatorId: string, text: string, thr
     .map((m) => `${m.role === "user" ? "Người dùng" : "Bạn"}: ${m.text}`)
     .join("\n");
   const context = [history ? `Hội thoại trước đó:\n${history}` : "", await aiNotes(creatorId)].filter(Boolean).join("\n\n");
+  /**
+   * Bảng báo cáo (tổng quan + danh mục + top sản phẩm + top video) chỉ hợp khi câu hỏi về bán hàng
+   * hoặc về nội dung. Hỏi liên hệ mà vẫn đổ bảng top sản phẩm ra là nhiễu — lỗi đã gặp.
+   * Phải dựng **trước** khi gọi model, vì danh sách bảng được phép chèn phụ thuộc bảng nào có dữ liệu.
+   */
+  // Hỏi "video nào nổi bật" không kích bước nào tốn tiền, nhưng vẫn cần bảng xếp hạng video từ DB
+  const contentFocus = at("videos") >= 0 || VIDEO_LIST_Q.test(text);
+  const report = salesFocus || contentFocus ? await creatorReport(creatorId) : null;
   // Bảng nào đang thực sự có dữ liệu thì mới cho model chèn
   const available: DataBlockId[] = [];
   if (salesFocus) available.push("overview", "categories", "top_products");
   if (at("peers") >= 0 && peers) available.push("peers");
   if (at("videos") >= 0 && videoClaims.size) available.push("videos");
+  if (report?.top_videos.length) available.push("top_videos");
   const h = await creatorHighlights(creatorId, new Map([...ev, ...videoClaims]), text, context, available);
   cost += h.cost_usd;
-  // Bảng báo cáo (tổng quan + danh mục + top sản phẩm) chỉ hợp khi câu hỏi về bán hàng.
-  // Hỏi liên hệ mà vẫn đổ bảng top sản phẩm ra là nhiễu — lỗi đã gặp.
-  const report = salesFocus ? await creatorReport(creatorId) : null;
   yield {
     type: "step_done",
     index: at("answer"),

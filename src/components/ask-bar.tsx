@@ -620,17 +620,48 @@ function TopProductTable({ data }: { data: ReportData }) {
         <tbody>
           {data.top_products.map((p) => (
             <tr key={p.product_id} className="border-t border-line first:border-t-0">
-              <td className="num w-8 px-3 py-1.5 text-ink-muted">{p.rank}</td>
-              <td className="px-3 py-1.5">
-                <span className="line-clamp-1">{p.name}</span>
+              <td className="num w-8 px-3 py-2 text-ink-muted">{p.rank}</td>
+              {/* Ảnh bìa lấy thẳng từ CDN Kalodata theo product_id — không cần crawl, không cần lưu */}
+              <td className="w-12 py-2 pl-1">
+                <ProductThumb id={p.product_id} name={p.name} />
               </td>
-              <td className="num w-36 px-3 py-1.5 text-right">
+              <td className="px-3 py-2">
+                <span className="line-clamp-2">{p.name}</span>
+              </td>
+              <td className="num w-40 px-3 py-2 text-right">
                 {vnd(p.revenue)} <span className="text-ink-muted">· {Math.round(p.share * 100)}%</span>
+                {p.sales_volume > 0 && <div className="text-ink-muted">{compact(p.sales_volume)} đơn</div>}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+/**
+ * Bảng video nổi bật — số liệu từ DB (0 token), khác với khối `Videos` là các video AI đã xem
+ * khung hình. Ảnh bìa bấm vào phát được, giống chỗ dẫn chứng video.
+ */
+function TopVideoTable({ data, handle }: { data: ReportData; handle: string }) {
+  if (!data.top_videos.length) return null;
+  return (
+    <div className="space-y-1.5">
+      {data.top_videos.map((v) => (
+        <div key={v.video_id} className="flex items-start gap-2.5 rounded-lg border border-line bg-white p-2">
+          <VideoThumb id={v.video_id} title={v.title} tiktokUrl={tiktokVideo(handle, v.video_id)} />
+          <div className="min-w-0 flex-1">
+            <p className="line-clamp-2 text-[12.5px]">{v.title}</p>
+            <p className="mt-1 text-[11.5px] text-ink-muted">
+              {compact(v.views)} view · {compact(v.likes)} like
+              {v.revenue > 0 && <> · {vnd(v.revenue)}</>}
+              {/* Video chạy quảng cáo thì lượt xem không phản ánh sức hút tự nhiên — phải nói rõ */}
+              {v.is_ad && <span className="ml-1 rounded bg-amber-100 px-1 py-px text-[10.5px] text-amber-800">quảng cáo</span>}
+            </p>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -686,6 +717,7 @@ function Answer({
             {b.data === "top_products" && data.report && <TopProductTable data={data.report} />}
             {b.data === "peers" && data.peers?.length ? <Peers items={data.peers} /> : null}
             {b.data === "videos" && data.videos?.length ? <Videos items={data.videos} handle={handle} /> : null}
+            {b.data === "top_videos" && data.report?.top_videos.length ? <TopVideoTable data={data.report} handle={handle} /> : null}
           </div>
         );
       })}

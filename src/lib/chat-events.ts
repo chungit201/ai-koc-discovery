@@ -17,7 +17,7 @@ export type AnswerBlock =
   | { type: "closing"; text: string };
 
 /** Các bảng/dữ liệu code có thể dựng. Model chỉ được chèn khi bước tương ứng đã chạy. */
-export type DataBlockId = "overview" | "categories" | "top_products" | "peers" | "videos";
+export type DataBlockId = "overview" | "categories" | "top_products" | "peers" | "videos" | "top_videos";
 
 /** Bảng số liệu của báo cáo — do code dựng từ DB, AI không sinh ra con số nào ở đây. */
 export interface ReportData {
@@ -27,7 +27,12 @@ export interface ReportData {
   videos_count: number;
   followers: number;
   categories: { name: string; revenue: number; share: number; sub: string[] }[];
-  top_products: { rank: number; product_id: string; name: string; revenue: number; share: number }[];
+  top_products: { rank: number; product_id: string; name: string; revenue: number; share: number; sales_volume: number }[];
+  /**
+   * Video nổi bật lấy thẳng từ DB — **khác hẳn** `videos` trong `StepPayload`: chỗ kia là vài video
+   * AI đã xem khung hình (đắt), chỗ này là bảng xếp hạng toàn bộ video theo số đo, 0 token.
+   */
+  top_videos: { rank: number; video_id: string; title: string; views: number; likes: number; revenue: number; is_ad: boolean }[];
 }
 
 export interface StepPayload {

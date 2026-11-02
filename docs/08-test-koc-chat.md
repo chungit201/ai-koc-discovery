@@ -1,7 +1,7 @@
 # Kết quả test hỏi đáp ở trang hồ sơ KOC
 
-> Chạy 2026-11-02 11:02 UTC · KOC `7088624652566660098` · http://localhost:3002 · `npm run test:koc`
-> **13/15 ca đạt** · tổng chi phí AI **$0.0000** · tổng thời gian 23.0s
+> Chạy 2026-11-02 12:37 UTC · KOC `7088240910156923905` · http://localhost:3002 · `npm run test:koc`
+> **14/15 ca đạt** · tổng chi phí AI **$0.4705** · tổng thời gian 511.5s
 
 ## Tiêu chí chấm
 
@@ -17,21 +17,21 @@
 
 | # | Ca | Nhóm | Kết quả | Kế hoạch | Ý có dẫn chứng | Thời gian | Chi phí |
 |---|---|---|---|---|---|---|---|
-| 1 | `metrics-overview` | Chỉ số & điểm nổi bật | ✅ | 4 bước | 2 | 1.9s | $0.0000 |
-| 2 | `metrics-stability` | Chỉ số & điểm nổi bật | ❌ | 2 bước | 0 | 1.7s | $0.0000 |
-| 3 | `metrics-engagement` | Chỉ số & điểm nổi bật | ✅ | 2 bước | 2 | 1.9s | $0.0000 |
-| 4 | `metrics-audience` | Chỉ số & điểm nổi bật | ✅ | 2 bước | 1 | 1.5s | $0.0000 |
-| 5 | `products-category` | Sản phẩm & danh mục | ✅ | 2 bước | 2 | 1.8s | $0.0000 |
-| 6 | `products-brand` | Sản phẩm & danh mục | ❌ | 2 bước | 0 | 1.8s | $0.0000 |
-| 7 | `profile-contact` | Hồ sơ & chi phí | ✅ | 2 bước | 1 | 1.4s | $0.0000 |
-| 8 | `profile-cost` | Hồ sơ & chi phí | ✅ | 2 bước | 1 | 1.5s | $0.0000 |
-| 9 | `profile-mcn` | Hồ sơ & chi phí | ✅ | 2 bước | 1 | 1.5s | $0.0000 |
-| 10 | `content-quality` | Nội dung & video | ✅ | 3 bước | 3 | 1.8s | $0.0000 |
-| 11 | `content-demo` | Nội dung & video | ✅ | 3 bước | 3 | 1.8s | $0.0000 |
+| 1 | `metrics-overview` | Chỉ số & điểm nổi bật | ✅ | 3 bước | 3 | 1.9s | $0.0000 |
+| 2 | `metrics-stability` | Chỉ số & điểm nổi bật | ❌ | 2 bước | 1 | 22.2s | $0.0254 |
+| 3 | `metrics-engagement` | Chỉ số & điểm nổi bật | ✅ | 2 bước | 2 | 68.9s | $0.0557 |
+| 4 | `metrics-audience` | Chỉ số & điểm nổi bật | ✅ | 2 bước | 1 | 32.3s | $0.0306 |
+| 5 | `products-category` | Sản phẩm & danh mục | ✅ | 2 bước | 2 | 1.9s | $0.0000 |
+| 6 | `products-brand` | Sản phẩm & danh mục | ✅ | 2 bước | 1 | 33.6s | $0.0327 |
+| 7 | `profile-contact` | Hồ sơ & chi phí | ✅ | 2 bước | 1 | 21.7s | $0.0246 |
+| 8 | `profile-cost` | Hồ sơ & chi phí | ✅ | 2 bước | 1 | 51.6s | $0.0437 |
+| 9 | `profile-mcn` | Hồ sơ & chi phí | ✅ | 2 bước | 1 | 21.0s | $0.0248 |
+| 10 | `content-quality` | Nội dung & video | ✅ | 3 bước | 5 | 73.0s | $0.0659 |
+| 11 | `content-demo` | Nội dung & video | ✅ | 3 bước | 3 | 34.7s | $0.0346 |
 | 12 | `oos-voice` | Ngoài phạm vi | ✅ | 1 bước | 0 | 0.1s | $0.0000 |
-| 13 | `thread-1-overview` | Hỏi nối tiếp | ✅ | 2 bước | 6 | 1.4s | $0.0000 |
-| 14 | `thread-2-cost` | Hỏi nối tiếp | ✅ | 2 bước | 1 | 1.4s | $0.0000 |
-| 15 | `thread-3-contact` | Hỏi nối tiếp | ✅ | 2 bước | 1 | 1.4s | $0.0000 |
+| 13 | `thread-1-overview` | Hỏi nối tiếp | ✅ | 2 bước | 4 | 67.1s | $0.0553 |
+| 14 | `thread-2-cost` | Hỏi nối tiếp | ✅ | 2 bước | 1 | 51.4s | $0.0468 |
+| 15 | `thread-3-contact` | Hỏi nối tiếp | ✅ | 2 bước | 1 | 30.2s | $0.0305 |
 
 ## Chi tiết từng ca
 
@@ -39,26 +39,27 @@
 
 **Câu hỏi:** Đánh giá khả năng bán hàng, so với creator cùng tầm thế nào?
 
-**Kế hoạch AI lập:** 1. Lấy thông tin quy mô follower để xác định nhóm so sánh · 2. Phân tích doanh thu, lượt xem, tương tác, sản phẩm đã bán trong 30 ngày · 3. So sánh hiệu suất bán hàng với creator cùng quy mô follower · 4. Tổng hợp đánh giá khả năng bán hàng và vị trí trong nhóm peer
+**Kế hoạch AI lập:** 1. Lấy chỉ số bán hàng 30 ngày (doanh thu, sản phẩm bán, tương tác, độ ổn định) · 2. Lập nhóm KOC cùng tầm follower và so sánh hiệu suất bán hàng · 3. Đánh giá khả năng bán hàng và xếp hạng so với creator cùng tầm
 
-**Kết quả từng bước:** 19 chỉ số từ DB: doanh thu, lượt xem, tương tác, sản phẩm, độ ổn định theo ngày · 260 KOC mỹ phẩm 220,3k–881,2k follower · doanh thu gấp 81 lần trung vị nhóm · tương tác thấp hơn trung vị nhóm 87% · Tổng hợp từ bằng chứng · 2 ý có nguồn
+**Kết quả từng bước:** 23 chỉ số từ DB: doanh thu, lượt xem, tương tác, sản phẩm, độ ổn định theo ngày · 6 KOC mỹ phẩm 128,6k–514,2k follower · doanh thu gấp 7,7 lần trung vị nhóm · tương tác thấp hơn trung vị nhóm 32% · Tổng hợp từ bằng chứng · 3 ý có nguồn
 
 **Dẫn chứng kèm theo:** 4 sản phẩm, 4 KOC cùng tầm, bảng báo cáo
 
-**Trả lời (tóm tắt nội bộ):** Khả năng bán hàng vượt trội so với nhóm cùng tầm, nhưng không phải nhất và chủ yếu từ livestream.
+**Trả lời (tóm tắt nội bộ):** Creator này bán hàng rất mạnh, vượt trội creator cùng quy mô follower; doanh thu gấp 7,7 lần trung vị nhóm đối chuẩn.
 
-**Bố cục model tự dựng:** para → para
+**Bố cục model tự dựng:** para → para → para → data:peers
 
 **Các ý + bằng chứng được trích:**
 
-- Điều đáng lưu ý là doanh thu cao như vậy hầu như toàn bộ đến từ livestream (₫10,1 tỉ, chiếm 99% tổng), còn video chỉ sinh ra ₫100,9 tr. Trong 30 ngày, creator tổ chức 28 phiên live với ₫6,4 tr trên 1.000 lượt xem live. Nên nếu bạn muốn đánh giá khả năng bán qua content video thì con số sẽ thấp hơn nhiều. — `ev_koc_7088624652566660098_revenue`, `ev_koc_7088624652566660098_views`, `ev_koc_7088624652566660098_consistency`, `ev_koc_7088624652566660098_videos`, `ev_koc_7088624652566660098_sales`, `ev_koc_7088624652566660098_channel_mix`
-- Một điểm khác cần chú ý: tỷ lệ tương tác video của creator chỉ 0,45%, thấp hơn 87% so với trung vị nhóm cùng tầm (3,58%). Điều này có thể liên quan đến chiến lược chủ yếu dựa vào livestream thay vì xây dựng độc lập từ video. — `ev_koc_7088624652566660098_peer_engagement`
+- Khả năng bán hàng của creator này rất mạnh, xếp hạng số 1 trong nhóm creator mỹ phẩm cùng quy mô (128,6k–514,2k follower). Trong 30 ngày, doanh thu ₫30,3 tỉ gấp 7,7 lần trung vị nhóm đối chuẩn ₫3,9 tỉ. — `ev_koc_7088240910156923905_revenue`, `ev_koc_7088240910156923905_peer_revenue`
+- Về cơ chế bán, creator chủ yếu dùng livestream, chốt được ₫33 tỉ từ 23k đơn trong tháng với tỷ lệ conversion 0,92% trên lượt xem live. Giá trị đơn bình quân ₫1,5 tr cho thấy khả năng upsell tốt. — `ev_koc_7088240910156923905_sales`, `ev_koc_7088240910156923905_live_conversion`, `ev_koc_7088240910156923905_subcategory_mix`, `ev_koc_7088240910156923905_channel_mix`
+- Lưu ý: tương tác video của creator (0,40%) thấp hơn trung vị nhóm (0,58%), nhưng điều này không ảnh hưởng đến khả năng chốt sale vì chiến lược bán hàng chủ yếu qua livestream, không phụ thuộc vào tương tác video feed. — `ev_koc_7088240910156923905_peer_engagement`
 
 **Gợi ý hỏi tiếp:**
 
-- Sản phẩm nào bán chạy nhất của creator này?
-- Danh mục trang điểm chiếm bao nhiêu doanh thu?
-- Phương Sena bán hơn ₫30 tỉ qua livestream hay video?
+- Sản phẩm nào bán chạy nhất?
+- Tỷ lệ repeat customer như thế nào?
+- Chi phí livestream mỗi phiên là bao nhiêu?
 
 ### 2. ❌ `metrics-stability` — Chỉ số & điểm nổi bật
 
@@ -66,24 +67,26 @@
 
 **Kế hoạch AI lập:** 1. Đọc dữ liệu 30 ngày của KOC · 2. Tổng hợp câu trả lời
 
-**Kết quả từng bước:** 19 chỉ số từ DB: doanh thu, lượt xem, tương tác, sản phẩm, độ ổn định theo ngày · Tổng hợp từ bằng chứng · 0 ý có nguồn
+**Kết quả từng bước:** 23 chỉ số từ DB: doanh thu, lượt xem, tương tác, sản phẩm, độ ổn định theo ngày · Tổng hợp từ bằng chứng · 1 ý có nguồn
 
 **Dẫn chứng kèm theo:** 4 sản phẩm, bảng báo cáo
 
-**Trả lời (tóm tắt nội bộ):** Doanh thu ổn định với phân bổ đều trên 30 ngày.
+**Trả lời (tóm tắt nội bộ):** KOC có doanh thu toàn bộ 30 ngày với phân bố doanh thu khá đều.
 
-**Bố cục model tự dựng:** para
+**Bố cục model tự dựng:** para → closing
+
+**Các ý + bằng chứng được trích:**
+
+- Doanh thu của KOC này khá ổn định. Cô bán hàng mỗi ngày trong cả 30 ngày, và ngày cao nhất chỉ chiếm 9% tổng doanh thu, điều này cho thấy doanh thu phân bố khá đều trên từng ngày chứ không phụ thuộc quá nhiều vào bất kỳ ngày nào cụ thể. — `ev_koc_7088240910156923905_consistency`
 
 **Gợi ý hỏi tiếp:**
 
-- Sản phẩm nào bán chạy nhất trong kỳ này?
-- Doanh thu gấp bao nhiêu lần trung vị nhóm cùng tầm?
-- Livestream hay video bình thường là kênh bán chính?
+- Doanh thu livestream so với video bán hàng như thế nào?
+- Sản phẩm nào mang lại doanh thu cao nhất trong 30 ngày?
 
 **Không đạt:**
 
-- chỉ 0/2 ý có dẫn chứng
-- không trích bằng chứng đúng trọng tâm (consistency)
+- chỉ 1/2 ý có dẫn chứng
 
 ### 3. ✅ `metrics-engagement` — Chỉ số & điểm nổi bật
 
@@ -91,24 +94,24 @@
 
 **Kế hoạch AI lập:** 1. Đọc dữ liệu 30 ngày của KOC · 2. Tổng hợp câu trả lời
 
-**Kết quả từng bước:** 19 chỉ số từ DB: doanh thu, lượt xem, tương tác, sản phẩm, độ ổn định theo ngày · Tổng hợp từ bằng chứng · 2 ý có nguồn
+**Kết quả từng bước:** 23 chỉ số từ DB: doanh thu, lượt xem, tương tác, sản phẩm, độ ổn định theo ngày · Tổng hợp từ bằng chứng · 2 ý có nguồn
 
 **Dẫn chứng kèm theo:** 4 sản phẩm, bảng báo cáo
 
-**Trả lời (tóm tắt nội bộ):** Tỷ lệ tương tác của KOC này xếp vào nhóm thấp, kém đối chiếu với nhóm cùng tầm.
+**Trả lời (tóm tắt nội bộ):** Tỷ lệ tương tác thấp, nhóm thấp, kém peer cùng tầm.
 
-**Bố cục model tự dựng:** para → para → closing
+**Bố cục model tự dựng:** para → para
 
 **Các ý + bằng chứng được trích:**
 
-- Tỷ lệ tương tác của KOC này là 0,45%, xếp vào nhóm thấp. So với 260 KOC cùng tầm (220,3k–881,2k follower), tỷ lệ 0,45% thấp hơn trung vị nhóm 87%, chỉ đạt 3,58% của trung vị nhóm cùng tầm. — `ev_koc_7088624652566660098_engagement`, `ev_koc_7088624652566660098_peer_revenue`, `ev_koc_7088624652566660098_peer_engagement`
-- Để so sánh cụ thể: KOC doanh thu cao nhất trong nhóm cùng tầm như Phương Sena, Mần đẹp 💅, hay Ngân lỳ ☺️66P1 đều có tỷ lệ tương tác từ 0,40% đến 1,37%, trong đó Ngân lỳ ☺️66P1 đạt 1,37%. Điều này cho thấy mặc dù KOC bán hàng rất khủng, khán giả lại không tương tác video nhiều. — `ev_koc_7088624652566660098_peer_top`
+- Tỷ lệ tương tác của KOC này thấp. Video có tương tác 0,40%, nằm trong nhóm thấp so với 1012 KOC đã thu thập. — `ev_koc_7088240910156923905_engagement`
+- Khi đối chuẩn với 6 KOC cùng danh mục bán hàng và quy mô follower (128,6k–514,2k), tương tác 0,40% này thấp hơn trung vị nhóm 32%, ở mức 0,58%. Bích Ngọc và Mây Ăn Ảnh 🌨 trong nhóm đạt 0,57% và 0,60%, cao hơn rõ rệt; chỉ có Lữ Nhật Hào thấp hơn với 0,35%. — `ev_koc_7088240910156923905_engagement`, `ev_koc_7088240910156923905_category_mix`, `ev_koc_7088240910156923905_subcategory_mix`, `ev_koc_7088240910156923905_products`, `ev_koc_7088240910156923905_peer_revenue`, `ev_koc_7088240910156923905_peer_engagement`, `ev_koc_7088240910156923905_peer_top`
 
 **Gợi ý hỏi tiếp:**
 
-- Doanh thu của KOC này so với nhóm cùng tầm như thế nào?
-- Chính livestream hay video nào chính là nguồn doanh thu chính?
-- Khán giả KOC này là ai?
+- Tại sao doanh thu cao nhưng tương tác lại thấp?
+- Khán giả của KOC là ai?
+- Danh mục sản phẩm chính của KOC là gì?
 
 ### 4. ✅ `metrics-audience` — Chỉ số & điểm nổi bật
 
@@ -120,95 +123,72 @@
 
 **Dẫn chứng kèm theo:** (không có)
 
-**Trả lời (tóm tắt nội bộ):** Khán giả chủ yếu là nữ trẻ nhóm tuổi 25-34
+**Trả lời (tóm tắt nội bộ):** Khán giả chủ yếu là nữ giới, nhóm tuổi 25-34
 
-**Bố cục model tự dựng:** para → closing
+**Bố cục model tự dựng:** para
 
 **Các ý + bằng chứng được trích:**
 
-- Khán giả của KOC này đa số là nữ, nhóm tuổi 25-34. — `ev_koc_7088624652566660098_audience`
+- Khán giả của KOC chủ yếu là nữ giới, nhóm tuổi 25-34. Với 257,1k follower độc lập không thuộc MCN nào, cô ấy thu hút đa số những người phụ nữ trẻ đang theo dõi hành trình skincare và làm đẹp của mình. — `ev_koc_7088240910156923905_audience`, `ev_koc_7088240910156923905_followers`
 
 **Gợi ý hỏi tiếp:**
 
-- Sản phẩm nào bán chạy nhất trên kênh này?
-- Tỷ lệ tương tác video của KOC này như thế nào?
-- Doanh thu của KOC này so với các KOC cùng tầm ra sao?
+- KOC này bán nhiều sản phẩm danh mục nào nhất?
+- Doanh thu và tương tác của KOC so với đối thủ cùng lĩnh vực như thế nào?
+- Video có lượt xem cao nhất của KOC là video gì?
 
 ### 5. ✅ `products-category` — Sản phẩm & danh mục
 
 **Câu hỏi:** Chủ yếu bán danh mục và sản phẩm nào?
 
-**Kế hoạch AI lập:** 1. Đọc dữ liệu 30 ngày của KOC · 2. Tổng hợp câu trả lời
+**Kế hoạch AI lập:** 1. Đọc dữ liệu sản phẩm và danh mục bán trong 30 ngày · 2. Tổng hợp danh mục và sản phẩm chủ yếu
 
-**Kết quả từng bước:** 19 chỉ số từ DB: doanh thu, lượt xem, tương tác, sản phẩm, độ ổn định theo ngày · Tổng hợp từ bằng chứng · 2 ý có nguồn
+**Kết quả từng bước:** 23 chỉ số từ DB: doanh thu, lượt xem, tương tác, sản phẩm, độ ổn định theo ngày · Tổng hợp từ bằng chứng · 2 ý có nguồn
 
 **Dẫn chứng kèm theo:** 4 sản phẩm, bảng báo cáo
 
-**Trả lời (tóm tắt nội bộ):** KOC tập trung bán trang điểm với thương hiệu Bảng.
+**Trả lời (tóm tắt nội bộ):** KOC bán chủ yếu chăm sóc da qua thương hiệu Lubylab
 
-**Bố cục model tự dựng:** para → data:categories → para → closing
+**Bố cục model tự dựng:** para → data:categories → data:top_products → para → closing
 
 **Các ý + bằng chứng được trích:**
 
-- KOC chủ yếu bán trang điểm, chiếm 74% doanh thu sản phẩm với 10,2 tỉ đồng, tiếp theo là chăm sóc da với 23% doanh thu. — `ev_koc_7088624652566660098_category_mix`
-- Trong danh mục trang điểm, sản phẩm bán chạy nhất là kem che khuyết điểm & phấn nền (2,6 tỉ, 19% doanh thu), phấn mắt (2,2 tỉ, 16%), và tẩy trang (1,3 tỉ, 10%). Thương hiệu Bảng xuất hiện nhiều nhất với 16/100 sản phẩm, đóng góp 21% tổng doanh thu sản phẩm. — `ev_koc_7088624652566660098_subcategory_mix`, `ev_koc_7088624652566660098_brand_focus`
+- KOC bán chủ yếu là chăm sóc da với ₫23,5 tỉ doanh thu, chiếm 72% tổng doanh thu sản phẩm trong 30 ngày. Trong đó, Lubylab là thương hiệu chính với 36/55 sản phẩm bán, chiếm 76% doanh thu. Sản phẩm top bán chạy là combo kem chống nắng Lubylab (5,2 tỉ) và kem Liposome cica PDRN (3,5 tỉ). — `ev_koc_7088240910156923905_category_mix`, `ev_koc_7088240910156923905_brand_focus`, `ev_koc_7088240910156923905_products`, `ev_koc_7088240910156923905_orders`, `ev_koc_7088240910156923905_revenue`
+- Trong nhóm chăm sóc da, bộ dụng cụ chăm sóc da bán nhiều nhất với ₫10,5 tỉ (32% doanh thu), theo sau là serum & tinh chất ₫4,9 tỉ (15%). Giá sản phẩm trung vị là ₫1,6 tr/sản phẩm, dải từ ₫178,3k đến ₫5,1 tr. KOC đã bán được 19,9k đơn từ 55 sản phẩm, với giá trị đơn bình quân ₫1,6 tr. — `ev_koc_7088240910156923905_subcategory_mix`, `ev_koc_7088240910156923905_price_range`, `ev_koc_7088240910156923905_orders`
 
 **Gợi ý hỏi tiếp:**
 
-- Sản phẩm nào bán chạy nhất?
-- Thương hiệu Bảng có những sản phẩm nào?
-- Doanh thu livestream vs video?
+- Danh mục nào khác KOC bán ngoài chăm sóc da?
+- Doanh thu livestream so với video như thế nào?
+- Doanh thu 30 ngày gấp mấy lần KOC cùng quy mô?
 
-### 6. ❌ `products-brand` — Sản phẩm & danh mục
+### 6. ✅ `products-brand` — Sản phẩm & danh mục
 
 **Câu hỏi:** KOC có bị phụ thuộc vào một thương hiệu nào không?
 
 **Kế hoạch AI lập:** 1. Đọc dữ liệu 30 ngày của KOC · 2. Tổng hợp câu trả lời
 
-**Kết quả từng bước:** 19 chỉ số từ DB: doanh thu, lượt xem, tương tác, sản phẩm, độ ổn định theo ngày · Tổng hợp từ bằng chứng · 0 ý có nguồn
+**Kết quả từng bước:** 23 chỉ số từ DB: doanh thu, lượt xem, tương tác, sản phẩm, độ ổn định theo ngày · Tổng hợp từ bằng chứng · 1 ý có nguồn
 
 **Dẫn chứng kèm theo:** 4 sản phẩm, bảng báo cáo
 
-**Trả lời (tóm tắt nội bộ):** KOC độc lập, không bị phụ thuộc thương hiệu nào.
+**Trả lời (tóm tắt nội bộ):** KOC độc lập pháp lý nhưng sản phẩm tập trung rất cao vào Lubylab
 
 **Bố cục model tự dựng:** para
 
+**Các ý + bằng chứng được trích:**
+
+- Về mặt pháp lý, KOC là nhà sáng tạo độc lập, không thuộc shop hay MCN nào, nên không bị ràng buộc hợp đồng. Tuy nhiên, về nội dung và danh mục bán hàng thì lại tập trung rất mạnh vào Lubylab. Trong 55 sản phẩm đã bán, Lubylab chiếm 36 sản phẩm (65% số lượng) và mang lại 76% doanh thu sản phẩm. Điều này có nghĩa KOC vẫn có rủi ro phụ thuộc sản phẩm — nếu Lubylab giảm hợp tác hoặc thay đổi chính sách, doanh thu sẽ bị ảnh hưởng đáng kể. — `ev_koc_7088240910156923905_brand_focus`, `ev_koc_7088240910156923905_products`, `ev_koc_7088240910156923905_orders`, `ev_koc_7088240910156923905_top_videos`
+
 **Gợi ý hỏi tiếp:**
 
-- Sản phẩm bán chạy nhất của KOC là cái gì?
-- KOC bán những danh mục mỹ phẩm nào?
-
-**Không đạt:**
-
-- chỉ 0/1 ý có dẫn chứng
-- không trích bằng chứng đúng trọng tâm (products / category_mix)
+- Top sản phẩm Lubylab bán chạy nhất là những gì?
+- KOC bán bao nhiêu sản phẩm từ các brand khác?
+- Lubylab có yêu cầu exclusivity (bán riêng) không?
 
 ### 7. ✅ `profile-contact` — Hồ sơ & chi phí
 
 **Câu hỏi:** Tôi có thể liên hệ với KOC ở đâu?
-
-**Kế hoạch AI lập:** 1. Xem hồ sơ KOC và kênh liên hệ công khai · 2. Tổng hợp thông tin liên hệ
-
-**Kết quả từng bước:** Hồ sơ: handle TikTok, MCN, kênh liên hệ công khai, follower, khán giả · Tổng hợp từ bằng chứng · 1 ý có nguồn
-
-**Dẫn chứng kèm theo:** (không có)
-
-**Trả lời (tóm tắt nội bộ):** KOC chưa công khai thông tin liên hệ trực tiếp.
-
-**Bố cục model tự dựng:** para → closing
-
-**Các ý + bằng chứng được trích:**
-
-- KOC hiện chưa có liên hệ công khai trong hồ sơ. Bạn có thể tiếp cận qua kênh TikTok @maitrinh0912 hoặc qua MCN UpBase Technology Joint Stock Company, nơi KOC đang hợp tác. — `ev_koc_7088624652566660098_contact`, `ev_koc_7088624652566660098_followers`
-
-**Gợi ý hỏi tiếp:**
-
-- Doanh thu từ livestream chiếm bao nhiêu tổng doanh thu?
-- KOC đã bán những sản phẩm nào bán chạy nhất?
-
-### 8. ✅ `profile-cost` — Hồ sơ & chi phí
-
-**Câu hỏi:** Chi phí hợp tác ước tính bao nhiêu một video?
 
 **Kế hoạch AI lập:** 1. Đọc hồ sơ KOC · 2. Tổng hợp câu trả lời
 
@@ -216,19 +196,42 @@
 
 **Dẫn chứng kèm theo:** (không có)
 
-**Trả lời (tóm tắt nội bộ):** Chi phí ước tính khoảng 9,6–24 triệu một video, nhưng độ tin cậy thấp.
+**Trả lời (tóm tắt nội bộ):** KOC chưa công bố liên hệ công khai; chỉ có TikTok.
 
 **Bố cục model tự dựng:** para → closing
 
 **Các ý + bằng chứng được trích:**
 
-- Chi phí hợp tác ước tính khoảng 9,6 triệu đến 24 triệu đồng một video, được tính theo bậc follower với lệ phí MCN là 1,2 lần. Tuy nhiên, đây là con số ước tính có độ tin cậy thấp, nên bạn nên liên hệ trực tiếp với KOC hoặc MCN UpBase Technology để xác nhận giá chính xác. — `ev_koc_7088624652566660098_cost`
+- Hiện tại KOC chưa có liên hệ công khai trong hồ sơ. Bạn chỉ có thể liên hệ với cô ấy qua kênh TikTok @phuongsena bằng tin nhắn riêng hoặc bình luận trên video của cô. — `ev_koc_7088240910156923905_contact`
 
 **Gợi ý hỏi tiếp:**
 
-- Doanh thu từ livestream và video chia cách như thế nào?
-- KOC đã bán bao nhiêu sản phẩm trong 30 ngày qua?
-- Tỷ lệ tương tác video của KOC này so với nhóm cùng tầm thế nào?
+- KOC bán danh mục sản phẩm nào chủ yếu?
+- Doanh thu livestream so với video là bao nhiêu?
+- Khán giả của KOC là ai?
+
+### 8. ✅ `profile-cost` — Hồ sơ & chi phí
+
+**Câu hỏi:** Chi phí hợp tác ước tính bao nhiêu một video?
+
+**Kế hoạch AI lập:** 1. Lấy thông tin quy mô follower và MCN của KOC · 2. Ước tính chi phí hợp tác dựa trên bậc follower
+
+**Kết quả từng bước:** Hồ sơ: handle TikTok, MCN, kênh liên hệ công khai, follower, khán giả · Tổng hợp từ bằng chứng · 1 ý có nguồn
+
+**Dẫn chứng kèm theo:** (không có)
+
+**Trả lời (tóm tắt nội bộ):** Chi phí ước tính một video tương đối cao, cần liên hệ trực tiếp để xác định.
+
+**Bố cục model tự dựng:** para
+
+**Các ý + bằng chứng được trích:**
+
+- Chi phí hợp tác ước tính từ 4 triệu đến 10 triệu đồng một video, tùy theo quy mô follower. KOC này hiện có 257,1k follower và chưa công bố liên hệ hợp tác trong hồ sơ, nên bạn nên liên hệ trực tiếp qua TikTok @phuongsena để thương lượng chi phí cụ thể. Tuy nhiên con số này chỉ là ước tính với độ tin cậy thấp, giá thực tế có thể khác. — `ev_koc_7088240910156923905_cost`, `ev_koc_7088240910156923905_followers`
+
+**Gợi ý hỏi tiếp:**
+
+- KOC bán những sản phẩm gì, danh mục chủ yếu là gì?
+- Doanh thu từ livestream chiếm bao nhiêu so với video content?
 
 ### 9. ✅ `profile-mcn` — Hồ sơ & chi phí
 
@@ -240,45 +243,47 @@
 
 **Dẫn chứng kèm theo:** (không có)
 
-**Trả lời (tóm tắt nội bộ):** KOC thuộc MCN UpBase
+**Trả lời (tóm tắt nội bộ):** KOC không thuộc MCN, hoạt động độc lập
 
 **Bố cục model tự dựng:** para
 
 **Các ý + bằng chứng được trích:**
 
-- Có, KOC này thuộc MCN UpBase Technology Joint Stock Company. — `ev_koc_7088624652566660098_followers`
+- Không, KOC này không thuộc MCN nào. Với 257,1k follower, cô ấy hoạt động như một nhà sáng tạo độc lập. — `ev_koc_7088240910156923905_followers`
 
 **Gợi ý hỏi tiếp:**
 
-- Doanh thu 30 ngày của KOC này so với nhóm cùng tầm như thế nào?
-- Khán giả chính của KOC này là ai?
-- Danh mục sản phẩm bán nhiều nhất là gì?
+- KOC bán những sản phẩm gì, doanh thu bao nhiêu?
+- Làm sao liên hệ với KOC?
+- Khán giả của KOC là ai?
 
 ### 10. ✅ `content-quality` — Nội dung & video
 
 **Câu hỏi:** Chất lượng nội dung và cách review sản phẩm ra sao?
 
-**Kế hoạch AI lập:** 1. Đọc hồ sơ KOC · 2. Xem khung hình video để đánh giá chất lượng nội dung và cách review sản phẩm · 3. Tổng hợp đánh giá chất lượng nội dung và cách review sản phẩm
+**Kế hoạch AI lập:** 1. Đọc hồ sơ KOC · 2. Xem khung hình video để đánh giá chất lượng nội dung, cách review, demo sản phẩm · 3. Tổng hợp nhận xét về nội dung, cách review và chất lượng hình ảnh
 
-**Kết quả từng bước:** Hồ sơ: handle TikTok, MCN, kênh liên hệ công khai, follower, khán giả · Đã xem 2 video, mỗi video 4 khung hình · Tổng hợp từ bằng chứng · 3 ý có nguồn
+**Kết quả từng bước:** Hồ sơ: handle TikTok, MCN, kênh liên hệ công khai, follower, khán giả · Đã xem 2 video, mỗi video 4 khung hình · Tổng hợp từ bằng chứng · 5 ý có nguồn
 
-**Dẫn chứng kèm theo:** 2 video
+**Dẫn chứng kèm theo:** 2 video, bảng báo cáo
 
-**Trả lời (tóm tắt nội bộ):** Nội dung có sự chênh lệch chất lượng giữa video demo chi tiết và video livestream.
+**Trả lời (tóm tắt nội bộ):** Phong cách review chi tiết nhưng tập trung quá mạnh vào Lubylab ảnh hưởng tính khách quan.
 
-**Bố cục model tự dựng:** para → heading → bullets → closing
+**Bố cục model tự dựng:** para → heading → para → heading → bullets → heading → para → data:top_videos → closing
 
 **Các ý + bằng chứng được trích:**
 
-- Chất lượng nội dung của KOC không ổn định. Có những video demo sản phẩm chi tiết và chuyên nghiệp, nhưng cũng có những video chỉ quay màn hình livestream bán hàng mà không có demo sản phẩm cụ thể. — `ev_koc_7088624652566660098_video_7637821422731005191`, `ev_koc_7088624652566660098_video_7694248416360123655`
-- Video demo sản phẩm: Video 'Ai đang phân vân không biết chọn mỹ phẩm gì thì vô live Mai' (89,1k view) có demo sản phẩm 78/100, chất lượng hình ảnh 70/100, độ tự nhiên 75/100. KOC giới thiệu chi tiết các bảng phấn mắt Cheeryep và mời khách xem tiếp trong livest — `ev_koc_7088624652566660098_video_7637821422731005191`
-- Video livestream: Video 'Manifest live Mai Trịnh lúc nào cũng có deal zá hạt dẻ' (42,5k view) chỉ quay màn hình livestream bán hàng, không có demo sản phẩm (5/100), chất lượng hình ảnh 40/100, độ tự nhiên 30/100. — `ev_koc_7088624652566660098_video_7694248416360123655`
+- Chất lượng nội dung của KOC có phong cách review khá chi tiết, tập trung vào skincare routine và chăm sóc da. Tuy nhiên, có một điểm hạn chế là sự tập trung quá mạnh vào thương hiệu Lubylab, điều này ảnh hưởng tới tính khách quan của các bài review. — `ev_koc_7088240910156923905_brand_focus`
+- KOC sử dụng phong cách review chi tiết với mức độ review đạt 70/100. Nội dung chủ yếu xoay quanh skincare routine, chăm sóc da và bảo vệ nắng. Cô đăng 30 video trong 30 ngày với tần suất đều đặn, mỗi video trung bình đạt 18,8k lượt xem. — `ev_koc_7088240910156923905_views`, `ev_koc_7088240910156923905_revenue`, `ev_koc_7088240910156923905_consistency`, `ev_koc_7088240910156923905_videos`, `ev_koc_7088240910156923905_sales`, `ev_koc_7088240910156923905_channel_mix`, `ev_koc_7088240910156923905_video_7691979426153762055`
+- Các video đều có demo sản phẩm. Ví dụ, video 'Kem chống nắng Lubylab Elixir – bước cuối không thể bỏ qua t' (49,8k view) có demo thực tế, KOC cầm sản phẩm và thoa thử trên da. — `ev_koc_7088240910156923905_video_7691979426153762055`
+- Chất lượng hình ảnh ở mức 65-70/100, độ tự nhiên của video khoảng 60/100. Một số video như 'Da xỉn màu, thiếu sức sống thì thử ngay Bút Bột Dưỡng Sáng' (23,6k view) có cầm sản phẩm giới thiệu nhưng chưa demo trực tiếp lên da. — `ev_koc_7088240910156923905_video_7691979426153762055`, `ev_koc_7088240910156923905_video_7693480710002199828`
+- Lubylab chiếm 76% doanh thu sản phẩm với 36 trong 55 sản phẩm bán ra. Sự tập trung quá mạnh vào một thương hiệu duy nhất có thể làm giảm tính khách quan của nội dung, vì khán giả có thể nhận thấy rằng KOC chủ yếu là người quảng cáo cho Lubylab chứ không phải reviewer độc lập. — `ev_koc_7088240910156923905_brand_focus`
 
 **Gợi ý hỏi tiếp:**
 
-- Sản phẩm nào bán chạy nhất?
-- Doanh thu bán hàng trong 30 ngày ổn định không?
-- Tương tác video so với KOC cùng tầm thế nào?
+- Video nào của KOC này bán được nhiều tiền nhất?
+- Nội dung review của KOC này so với các KOC khác như thế nào?
+- KOC này có thích hợp để hợp tác không?
 
 ### 11. ✅ `content-demo` — Nội dung & video
 
@@ -288,23 +293,23 @@
 
 **Kết quả từng bước:** Hồ sơ: handle TikTok, MCN, kênh liên hệ công khai, follower, khán giả · Đã xem 2 video, mỗi video 4 khung hình · Tổng hợp từ bằng chứng · 3 ý có nguồn
 
-**Dẫn chứng kèm theo:** 2 video
+**Dẫn chứng kèm theo:** 2 video, bảng báo cáo
 
-**Trả lời (tóm tắt nội bộ):** Mai Trịnh có demo sản phẩm trong một số video nhưng không phải tất cả.
+**Trả lời (tóm tắt nội bộ):** KOC có demo sản phẩm trực tiếp trong một số video, nhưng không phải tất cả.
 
-**Bố cục model tự dựng:** para → para → para → data:videos → closing
+**Bố cục model tự dựng:** para → bullets → closing
 
 **Các ý + bằng chứng được trích:**
 
-- Có, nhưng không phải tất cả video của Mai Trịnh đều có demo sản phẩm trực tiếp. Trong 30 video 30 ngày, có những video demo chi tiết với sản phẩm thực, nhưng cũng có video chỉ quay màn hình livestream mà không có nội dung demo. — `ev_koc_7088624652566660098_videos`
-- Video nhiều view nhất (89,1k lượt) có demo sản phẩm khá đầy đủ. Video 'Ai đang phân vân không biết chọn mỹ phẩm gì thì vô live Mai' đạt mức demo 78/100, chất lượng hình 70/100, độ tự nhiên 75/100. Mai giới thiệu các bảng phấn mắt Cheeryep, hộp phấn mắt nắp xanh lá và nắp hồng, đồng thời mời khán giả xem thêm tư vấn trong livestream. — `ev_koc_7088624652566660098_video_7637821422731005191`
-- Ngược lại, một số video không có demo trực tiếp. Video 'Manifest live Mai Trịnh lúc nào cũng có deal zá hạt dẻ' (42,5k view) chỉ quay màn hình livestream với danh sách sale, không có người dẫn hay demo thực tế, chỉ đạt 5/100 về demo, 40/100 chất lượng hình và 30/100 độ tự nhiên. — `ev_koc_7088624652566660098_video_7694248416360123655`
+- KOC có demo sản phẩm trực tiếp (thoa thử lên da) nhưng không phải video nào cũng vậy. Trong số các video được xem chi tiết, có video thể hiện demo đầy đủ, còn lại chỉ là giới thiệu và cầm sản phẩm nói chuyện mà chưa thực hành trên da. — `ev_koc_7088240910156923905_video_7691979426153762055`, `ev_koc_7088240910156923905_video_7693480710002199828`
+- Video 'Kem chống nắng Lubylab Elixir – bước cuối không thể bỏ qua t' (49,8k view): KOC nữ **thoa thử kem chống nắng Lubylab trực tiếp**, với độ demo sản phẩm 70/100, trong bối cảnh livestream sự kiện. — `ev_koc_7088240910156923905_video_7691979426153762055`
+- Video '✨ Da xỉn màu, thiếu sức sống thì thử ngay Bút Bột Dưỡng Sáng' (23,6k view): KOC giới thiệu bút dưỡng sáng da, cầm sản phẩm nói chuyện nhưng **chưa thoa trực tiếp lên da**, độ demo chỉ 70/100. — `ev_koc_7088240910156923905_video_7693480710002199828`
 
 **Gợi ý hỏi tiếp:**
 
-- Doanh thu chính là từ video hay livestream của Mai Trịnh?
-- Mai Trịnh bán những danh mục mỹ phẩm nào nhiều nhất?
-- Tương tác và engagement của Mai Trịnh so với các KOC cùng tầm như thế nào?
+- KOC chủ yếu bán những sản phẩm gì?
+- Video nào của KOC có lượt xem cao nhất?
+- Chi phí hợp tác với KOC này khoảng bao nhiêu?
 
 ### 12. ✅ `oos-voice` — Ngoài phạm vi
 
@@ -326,52 +331,50 @@
 
 **Kế hoạch AI lập:** 1. Đọc hồ sơ KOC · 2. Tổng hợp câu trả lời
 
-**Kết quả từng bước:** Hồ sơ: handle TikTok, MCN, kênh liên hệ công khai, follower, khán giả · Tổng hợp từ bằng chứng · 6 ý có nguồn
+**Kết quả từng bước:** Hồ sơ: handle TikTok, MCN, kênh liên hệ công khai, follower, khán giả · Tổng hợp từ bằng chứng · 4 ý có nguồn
 
 **Dẫn chứng kèm theo:** (không có)
 
-**Trả lời (tóm tắt nội bộ):** KOC maitrinh0912 là nhóm dẫn đầu về doanh thu mỹ phẩm nhưng có tương tác yếu
+**Trả lời (tóm tắt nội bộ):** KOC Phương Sena mạnh doanh thu và ổn định, yếu tương tác và brand concentration.
 
-**Bố cục model tự dựng:** para → heading → para → para → heading → para → heading → para → heading → para → closing
+**Bố cục model tự dựng:** para → heading → para → heading → bullets → heading → para → closing
 
 **Các ý + bằng chứng được trích:**
 
-- KOC maitrinh0912 là một người bán hàng mỹ phẩm rất mạnh về doanh thu, thuộc nhóm dẫn đầu trong số 1012 KOC được khảo sát. Tuy nhiên, tương tác lại ở nhóm thấp, điều này cho thấy khán giả chủ yếu chuyên mua hàng hơn là tương tác nội dung. — `ev_koc_7088624652566660098_revenue`, `ev_koc_7088624652566660098_views`, `ev_koc_7088624652566660098_engagement`, `ev_koc_7088624652566660098_contact`
-- Doanh thu mỹ phẩm 30 ngày đạt 9,7 tỉ đồng, cao hơn 100% các KOC khác, xếp maitrinh0912 vào nhóm dẫn đầu. So sánh với 260 KOC cùng tầm (220,3k–881,2k follower), doanh thu gấp 81 lần trung vị nhóm (120,1 triệu đồng). Chỉ hai KOC khác là Phương Sena (30,3 tỉ và 12,3 tỉ) và Mần đẹp 💅 (11,2 tỉ) bán được nhiều hơn. — `ev_koc_7088624652566660098_revenue`, `ev_koc_7088624652566660098_views`, `ev_koc_7088624652566660098_contact`, `ev_koc_7088624652566660098_consistency`, `ev_koc_7088624652566660098_brand_focus`, `ev_koc_7088624652566660098_products`, `ev_koc_7088624652566660098_videos`, `ev_koc_7088624652566660098_peer_revenue`, `ev_koc_7088624652566660098_peer_top`
-- Danh mục bán chạy nhất là Trang điểm với 10,2 tỉ đồng (74% doanh thu), tiếp đến Chăm sóc da với 3,1 tỉ đồng (23%). Trong đó, Kem che khuyết điểm & Phấn nền là nhóm sản phẩm dẫn đầu với 2,6 tỉ đồng (19% doanh thu sản phẩm). Thương hiệu Bảng xuất hiện nhiều nhất, chiếm 21% doanh thu sản phẩm. — `ev_koc_7088624652566660098_category_mix`, `ev_koc_7088624652566660098_subcategory_mix`, `ev_koc_7088624652566660098_brand_focus`
-- Lượt xem 30 ngày là 9,1 triệu, cao hơn 75% các KOC khác, thuộc nhóm trên trung bình. Tuy nhiên, tỷ lệ tương tác video chỉ 0,45%, chỉ cao hơn 5% các KOC — đây là nhóm thấp. So với nhóm cùng tầm, tương tác thấp hơn trung vị nhóm 87% (0,45% so với 3,58%). Điều này phản ánh một khán giả có mục đích mua sắm rõ ràng hơn là tương tác với nội dung. — `ev_koc_7088624652566660098_views`, `ev_koc_7088624652566660098_engagement`, `ev_koc_7088624652566660098_peer_engagement`
-- Khán giả chủ yếu là phụ nữ, nhóm tuổi 25-34. Với 440,6k follower, maitrinh0912 hoạt động độc lập, không phụ thuộc shop nào. Doanh thu xuất hiện đều đặn 30 ngày liên tiếp, ngày cao nhất chỉ chiếm 5% tổng doanh thu, cho thấy tính ổn định cao. Nguồn doanh thu chủ yếu từ livestream (10,1 tỉ đồng, 99% tổng) thay vì video thường (100,9 triệu đồng), với 28 phiên live trong kỳ. — `ev_koc_7088624652566660098_revenue`, `ev_koc_7088624652566660098_views`, `ev_koc_7088624652566660098_engagement`, `ev_koc_7088624652566660098_followers`, `ev_koc_7088624652566660098_contact`, `ev_koc_7088624652566660098_audience`, `ev_koc_7088624652566660098_consistency`, `ev_koc_7088624652566660098_videos`, `ev_koc_7088624652566660098_sales`, `ev_koc_7088624652566660098_channel_mix`
-- Chi phí ước tính khoảng 9,6–24 triệu đồng mỗi video, tuy mức độ tin cậy thấp. Maitrinh0912 hiện chưa công khai thông tin liên hệ nhưng thuộc MCN UpBase Technology Joint Stock Company, có thể liên hệ qua đây hoặc tài khoản TikTok @maitrinh0912. — `ev_koc_7088624652566660098_cost`, `ev_koc_7088624652566660098_contact`, `ev_koc_7088624652566660098_followers`
+- Phương Sena là creator độc lập với 257,1k followers, không thuộc MCN, có doanh thu mỹ phẩm 30 ngày ₫30,3 tỉ — vượt xa so với 6 KOC cùng nhóm quy mô. Cụ thể, doanh thu gấp 7,7 lần trung vị nhóm (₫3,9 tỉ) và cao hơn các đối thủ như Nguyễn Quỳnh Anh (₫6,5 tỉ), Bích Ngọc (₫4,7 tỉ) hay Mây Ăn Ảnh (₫4,3 tỉ). Tuy vậy, tương tác chỉ 0,40% — thấp hơn 32% so với trung vị nhóm — và nội dung quá tập trung vào brand Lubylab (76% doanh thu sản phẩm), ảnh hưởng đến tính khách quan. — `ev_koc_7088240910156923905_followers`, `ev_koc_7088240910156923905_revenue`, `ev_koc_7088240910156923905_peer_revenue`, `ev_koc_7088240910156923905_peer_top`, `ev_koc_7088240910156923905_engagement`, `ev_koc_7088240910156923905_peer_engagement`, `ev_koc_7088240910156923905_brand_focus`
+- Xếp hạng 1/7 trong nhóm đối chuẩn cùng quy mô (128,6k–514,2k follower). Đặc biệt nổi bật là tính ổn định: có doanh thu cả 30 ngày liên tiếp, ngày cao nhất chỉ chiếm 9% tổng doanh thu — điều này cho thấy hiệu suất bán hàng rất đều. Chiến lược chủ yếu qua livestream (₫33 tỉ, 100% tổng doanh thu từ hàng thật), bán được 23k đơn với tỷ lệ chốt đơn 0,92% trên lượt xem livestream — con số khá tốt cho ngành mỹ phẩm. — `ev_koc_7088240910156923905_peer_revenue`, `ev_koc_7088240910156923905_consistency`, `ev_koc_7088240910156923905_channel_mix`, `ev_koc_7088240910156923905_sales`, `ev_koc_7088240910156923905_live_conversion`
+- Tương tác video 0,40% — nhóm thấp, 32% dưới trung vị nhóm đối chuẩn (0,58%). Nguyễn Quỳnh Anh (cùng nhóm) có tương tác 2,82%; Bích Ngọc 0,57%; Lữ Nhật Hào 0,35%. — `ev_koc_7088240910156923905_engagement`, `ev_koc_7088240910156923905_peer_engagement`, `ev_koc_7088240910156923905_peer_top`
+- 30 video trong 30 ngày, 14 video chạy quảng cáo. Video top performer: 'Kem chống nắng Lubylab Elixir' 49,8k view, mang về ₫6,5 tr; 'Cushion Lubylab' 46,6k view, ₫3,7 tr; 'Tẩy trang Lubylab' 43,9k view, ₫4 tr. Nội dung tập trung skincare routine, face care, sun protection — hầu hết có demo sản phẩm. Chi phí ước tính ₫4–10 tr/video theo quy mô follower (độ tin cậy thấp). — `ev_koc_7088240910156923905_videos`, `ev_koc_7088240910156923905_top_videos`, `ev_koc_7088240910156923905_cost`
 
 **Gợi ý hỏi tiếp:**
 
-- Tương tác 0,45% thấp có ảnh hưởng gì đến khả năng bán hàng?
-- So sánh KOC này với Phương Sena và Mần đẹp như thế nào?
-- Livestream chiếm 99% doanh thu — KOC này có chạy quảng cáo video không?
+- Sản phẩm nào bán tốt nhất, tôi nên ưu tiên danh mục nào khi hợp tác?
+- So sánh KOC này với Nguyễn Quỳnh Anh, nên chọn ai để bán hàng?
+- Khán giả của KOC này là ai, phù hợp với sản phẩm của tôi không?
 
 ### 14. ✅ `thread-2-cost` — Hỏi nối tiếp
 
 **Câu hỏi:** Thế còn chi phí hợp tác thì sao? _(hỏi nối tiếp trong cuộc `t-follow`)_
 
-**Kế hoạch AI lập:** 1. Đọc hồ sơ KOC · 2. Tổng hợp câu trả lời
+**Kế hoạch AI lập:** 1. Đọc hồ sơ KOC để xác định quy mô follower · 2. Ước tính chi phí hợp tác dựa trên bậc follower
 
 **Kết quả từng bước:** Hồ sơ: handle TikTok, MCN, kênh liên hệ công khai, follower, khán giả · Tổng hợp từ bằng chứng · 1 ý có nguồn
 
 **Dẫn chứng kèm theo:** (không có)
 
-**Trả lời (tóm tắt nội bộ):** Chi phí ước tính thấp nhưng độ tin cậy không cao.
+**Trả lời (tóm tắt nội bộ):** Chi phí ước tính ₫4–₫10 tr/video nhưng độ tin cậy thấp, cần liên hệ trực tiếp.
 
-**Bố cục model tự dựng:** para → closing
+**Bố cục model tự dựng:** para
 
 **Các ý + bằng chứng được trích:**
 
-- Chi phí ước tính để hợp tác là 9,6 – 24 triệu đồng mỗi video, tính theo bậc follower nhân với hệ số 1,2 do MCN. Tuy nhiên, con số này có độ tin cậy thấp, nên bạn nên kiểm chứng trực tiếp qua MCN UpBase Technology Joint Stock Company hoặc kênh TikTok của KOC để có mức giá chính xác. — `ev_koc_7088624652566660098_cost`
+- Chi phí hợp tác được ước tính ₫4 tr–₫10 tr/video, tính theo bậc follower của Phương Sena là 257,1k. Tuy nhiên con số này chỉ là ước tính với độ tin cậy thấp, nên bạn nên liên hệ trực tiếp qua TikTok @phuongsena (kênh công khai duy nhất trong hồ sơ) để thương lượng chi phí cụ thể. Mức giá sẽ thay đổi tuỳ theo hình thức hợp tác bạn lựa chọn. — `ev_koc_7088240910156923905_cost`, `ev_koc_7088240910156923905_followers`, `ev_koc_7088240910156923905_contact`
 
 **Gợi ý hỏi tiếp:**
 
-- Sản phẩm nào KOC này bán chạy nhất?
-- So sánh tương tác của KOC này với những KOC cùng tầm?
-- Doanh thu livestream so với video của KOC này thế nào?
+- Doanh thu từ livestream hay video dạng clip lớn hơn?
+- Sản phẩm top 3 bán chạy nhất của Phương Sena là cái nào?
+- Tương tác của Phương Sena thấp hơn bao nhiêu so với KOC ngang cơ?
 
 ### 15. ✅ `thread-3-contact` — Hỏi nối tiếp
 
@@ -383,15 +386,16 @@
 
 **Dẫn chứng kèm theo:** (không có)
 
-**Trả lời (tóm tắt nội bộ):** Liên hệ thông qua MCN hoặc kênh TikTok của KOC.
+**Trả lời (tóm tắt nội bộ):** KOC chưa công bố thông tin liên hệ công khai.
 
 **Bố cục model tự dựng:** para
 
 **Các ý + bằng chứng được trích:**
 
-- KOC chưa công bố liên hệ trực tiếp trên hồ sơ. Bạn có thể tiếp cận qua kênh TikTok @maitrinh0912 hoặc liên hệ thông qua MCN UpBase Technology Joint Stock Company — đây là cách chính để đàm phán hợp tác. — `ev_koc_7088624652566660098_contact`, `ev_koc_7088624652566660098_followers`
+- Phương Sena chưa có liên hệ công khai trong hồ sơ. Cách duy nhất để tiếp cận hiện tại là qua kênh TikTok @phuongsena của cô ấy. — `ev_koc_7088240910156923905_contact`
 
 **Gợi ý hỏi tiếp:**
 
-- Thương hiệu nào đã hợp tác thành công với KOC này?
-- Doanh thu từ livestream vs video khác nhau như thế nào?
+- Nên gửi sản phẩm danh mục nào cho cô ấy?
+- Khán giả chủ yếu của cô ấy là ai?
+- Doanh thu của cô ấy ổn định trong tháng không?
