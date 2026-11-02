@@ -1,17 +1,35 @@
 {
-  "name": "detola-tmp",
+  "name": "detola-koc-discovery",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:tunnel": "ssh -N -L 27117:127.0.0.1:27017 root@66.42.50.32",
+    "db:ping": "node --env-file=.env.local scripts/db-ping.mjs",
+    "db:init": "tsx --env-file=.env.local scripts/db-init.ts",
+    "crawl": "tsx --env-file=.env.local scripts/crawl.ts",
+    "probe": "tsx --env-file=.env.local scripts/kalodata-probe.ts",
+    "db:inspect": "tsx --env-file=.env.local scripts/db-inspect.ts",
+    "kalo:login": "tsx --env-file=.env.local scripts/kalodata-web-login.ts",
+    "kalo:discover": "tsx --env-file=.env.local scripts/kalodata-web-discover.ts",
+    "kalo:call": "tsx --env-file=.env.local scripts/kalodata-web-call.ts",
+    "crawl:web": "tsx --env-file=.env.local scripts/crawl-web.ts",
+    "db:audit": "tsx --env-file=.env.local scripts/data-audit.ts",
+    "avatars": "tsx --env-file=.env.local scripts/fetch-avatars.ts",
+    "resume": "tsx --conditions=react-server --env-file=.env.local scripts/resume.ts",
+    "s5": "tsx --conditions=react-server --env-file=.env.local scripts/s5.ts",
+    "top-kocs": "tsx --env-file=.env.local scripts/top-kocs.ts"
   },
   "dependencies": {
+    "lucide-react": "^1.66.0",
+    "mongodb": "^7.8.0",
     "next": "16.4.3",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "server-only": "^0.0.1"
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",
@@ -20,7 +38,9 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.4.3",
+    "playwright": "^1.64.1",
     "tailwindcss": "^4",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   }
 }
