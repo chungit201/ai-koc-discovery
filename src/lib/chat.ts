@@ -22,7 +22,7 @@ export interface ChatMessage {
   videos?: { video_id: string; title: string; views: number; times: number[]; summary: string; demo: string }[];
   /** Các bước phân tích đã chạy — mỗi lần gọi công cụ là một thẻ trên giao diện. */
   steps?: { title: string; detail: string; kind?: "data" | "peers" | "videos" | "conclusion"; payload?: StepPayload }[];
-  /** Trả lời bằng agent có công cụ (docs/10-koc-agent.md), khác luồng khối định sẵn. */
+  /** Trả lời bằng agent có công cụ (docs/02-tola-ai.md), khác luồng khối định sẵn. */
   agent?: boolean;
   peers?: { creator_id: string; name: string; followers: number; revenue: number; engagement: number; analysed?: boolean }[];
   /** Bảng số liệu của báo cáo (code dựng từ DB). */

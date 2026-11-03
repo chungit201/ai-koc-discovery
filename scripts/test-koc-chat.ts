@@ -1,5 +1,5 @@
 /**
- * Bộ test hỏi đáp ở trang hồ sơ KOC — chạy qua API thật rồi ghi kết quả ra docs/08-test-koc-chat.md
+ * Bộ test hỏi đáp ở trang hồ sơ KOC — chạy qua API thật rồi ghi kết quả ra logs/test-koc-chat.md
  *
  *   npm run test:koc            # dùng KOC mặc định, server http://localhost:3002
  *   npm run test:koc -- <creatorId> [baseUrl]
@@ -325,6 +325,6 @@ const md = [
   ]),
 ].join("\n");
 
-await writeFile("docs/08-test-koc-chat.md", md, "utf8");
-console.log(`\n${pass}/${results.length} ca đạt · $${totalCost.toFixed(4)} · đã ghi docs/08-test-koc-chat.md`);
+await writeFile("logs/test-koc-chat.md", md, "utf8");
+console.log(`\n${pass}/${results.length} ca đạt · $${totalCost.toFixed(4)} · đã ghi logs/test-koc-chat.md`);
 process.exit(pass === results.length ? 0 : 1);

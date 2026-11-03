@@ -6,7 +6,7 @@
  *   npm run crawl:web -- --pages 2 --top 30
  *   npm run crawl:web -- --resume <runId>
  *
- * Stages: list (filtered by audience) → detail (audience, MCN, contacts) → totals → products → videos
+ * Stages: list (filtered by audience) → detail (audience, MCN, contacts) → totals → products → videos → shops
  * Web plan quota: DETAIL.ACCESS_TIMES ≈ 1999 creator detail views / day.
  */
 import { parseArgs } from "node:util";
@@ -14,8 +14,10 @@ import { randomUUID } from "node:crypto";
 import type { Db } from "mongodb";
 import { closeDb, getDb } from "../src/lib/db/mongo";
 import { C, ensureIndexes } from "../src/lib/db/collections";
-import { KalodataWebClient } from "../src/lib/kalodata/web-client";
+import { exitCodeFor, KalodataWebClient, LIMIT_EXIT } from "../src/lib/kalodata/web-client";
 import { Checkpoint } from "../src/lib/crawl/checkpoint";
+import { crawlCreatorShops } from "../src/lib/crawl/creator-shops";
+import { fillVideoProducts, saveCreatorProducts } from "../src/lib/crawl/creator-products";
 import { parseDurationSec, parseVnNumber as n } from "../src/lib/kalodata/parse";
 
 const CATEGORY = { skincare: "848776", makeup: "848648", sunscreenFace: "601602" };
@@ -104,7 +106,15 @@ if (args.resume) {
 }
 
 const web = new KalodataWebClient(db, runId);
-await web.open();
+// Mở phiên cũng gọi Kalodata (kiểm tra đăng nhập) → có thể chạm giới hạn / phiên hỏng ngay tại đây
+try {
+  await web.open();
+} catch (err) {
+  console.error(`✖ không mở được phiên: ${err instanceof Error ? err.message : err}`);
+  await web.close().catch(() => undefined);
+  await closeDb();
+  process.exit(exitCodeFor(err)); // 4 = chạm giới hạn → daemon dừng hẳn
+}
 const started = Date.now();
 const dateRange = `${config.start_date}~${config.end_date}`;
 const range = { startDate: config.start_date, endDate: config.end_date };
@@ -176,7 +186,7 @@ try {
   }
 
   // ── Stage 2: one complete KOC at a time, best-scored first ──────────────────
-  // detail (audience, MCN, contacts) → totals + daily history → products → videos  (6 requests)
+  // detail (audience, MCN, contacts) → totals + daily history → products → videos → (thêm trang sản phẩm nếu video gắn SP ngoài top 50) → shops  (7 requests, +0–3)
   // Each finished KOC is fully usable even if the run pauses on the daily cap.
   const s2 = new Checkpoint(db, runId, "web:koc");
   await s2.register(topIds);
@@ -201,23 +211,28 @@ try {
       const products = await web.post<Record<string, string>[]>("/creator/detail/searchProducts", {
         ...body, pageNo: 1, pageSize: config.products_per_creator, sort: [{ field: "revenue", type: "DESC" }],
       });
-      await saveProducts(db, id, products);
+      await saveCreatorProducts(db, id, dateRange, products);
 
       const videos = await web.post<Record<string, unknown>[]>("/creator/detail/video/queryList", {
         ...body, pageNo: 1, pageSize: config.videos_per_creator, sort: [{ field: "revenue", type: "DESC" }], videoType: "",
       });
       await saveVideos(db, id, videos);
+      // Video gắn sản phẩm ngoài top 50 → lấy thêm trang sản phẩm (chỉ khi thiếu, tối đa 4 trang)
+      if (products.length >= config.products_per_creator) await fillVideoProducts(web, db, id, range);
+
+      // Tab "Cửa hàng": shop KOC hợp tác (cần tài khoản premium)
+      await crawlCreatorShops(web, db, id, range);
     });
     if (++n % 10 === 0) console.log(`  koc ${n}/${todo.size}`, await s2.summary());
   }
   console.log("koc:", await s2.summary());
 } catch (err) {
   const kind = (err as { kind?: string }).kind;
-  await runs.updateOne({ _id: runId }, { $set: { status: kind === "locked" ? "locked" : "partial", halted_reason: String(err), finished_at: now() } });
+  await runs.updateOne({ _id: runId }, { $set: { status: kind === "locked" ? "locked" : exitCodeFor(err) === LIMIT_EXIT ? "limited" : "partial", halted_reason: String(err), finished_at: now() } });
   console.error(`✖ run ${runId} stopped: ${err instanceof Error ? err.message : err}`);
   await web.close();
   await closeDb();
-  process.exit(kind === "locked" ? 3 : 1); // 3 = account warning/lock → the daemon must NOT retry
+  process.exit(exitCodeFor(err)); // 3 = khóa tài khoản, 4 = chạm giới hạn → daemon dừng hẳn
 } finally {
   await web.close();
 }
@@ -398,36 +413,6 @@ async function saveTotals(
       },
     },
     { upsert: true },
-  );
-}
-
-async function saveProducts(db: Db, id: string, rows: Record<string, string>[]) {
-  if (!rows.length) return;
-  await db.collection(C.products).bulkWrite(
-    rows.map((p) => ({
-      updateOne: {
-        filter: { _id: String(p.id) as never },
-        update: { $set: { name: p.product_title, seller_id: p.seller_id, updated_at: now() } },
-        upsert: true,
-      },
-    })),
-  );
-  await db.collection(C.creatorProducts).bulkWrite(
-    rows.map((p) => ({
-      updateOne: {
-        filter: { creator_id: id, product_id: String(p.id), date_range: dateRange },
-        update: {
-          $set: {
-            source: "web",
-            revenue: n(p.revenue),
-            sales_volume: n(p.sale),
-            unit_price: n(p.unit_price),
-            updated_at: now(),
-          },
-        },
-        upsert: true,
-      },
-    })),
   );
 }
 

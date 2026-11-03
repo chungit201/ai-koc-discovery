@@ -11,7 +11,6 @@ const PACE = {
   minIntervalMs: Number(process.env.KALODATA_WEB_INTERVAL_MS ?? 5000), // ≤ 12 req/min
   perHour: Number(process.env.KALODATA_WEB_MAX_PER_HOUR ?? 300),
   perDay: Number(process.env.KALODATA_WEB_MAX_PER_DAY ?? 1200),
-  waitOnCap: process.env.KALODATA_WEB_WAIT_ON_CAP === "1", // sleep through the daily cap instead of stopping
 };
 
 interface WebEnvelope<T> {
@@ -19,6 +18,20 @@ interface WebEnvelope<T> {
   data: T;
   message: string | null;
   code: string | null;
+}
+
+/**
+ * Mã thoát cho script crawl, daemon (crawl-web-daemon.ps1) dựa vào đây:
+ *   3 = tài khoản bị cảnh báo/khóa → ghi .cache/crawl-halted, KHÔNG BAO GIỜ tự chạy lại
+ *   4 = chạm giới hạn (trần ngày tự đặt, Kalodata báo hết lượt/limit, HTTP 429) → ghi .cache/crawl-limited, dừng hẳn
+ *   1 = lỗi tạm (mạng, DB) → daemon thử lại sau 10 phút
+ */
+export const LIMIT_EXIT = 4;
+export function exitCodeFor(err: unknown): number {
+  const kind = (err as { kind?: string })?.kind;
+  if (kind === "locked") return 3;
+  if (kind === "daily_cap" || kind === "quota") return LIMIT_EXIT;
+  return 1;
 }
 
 export class KalodataWebError extends Error {
@@ -100,7 +113,8 @@ export class KalodataWebClient {
         this.halted = msg;
         throw new KalodataWebError(`ACCOUNT LOCKED — crawl halted: ${msg}`, path, "locked");
       }
-      if (/used up|upgrade|limit/i.test(msg)) throw new KalodataWebError(msg, path, "quota");
+      // Kalodata chặn vì hết lượt / gọi quá nhiều → DỪNG cả lượt crawl, không thử lại (xem LIMIT_EXIT)
+      if (/used up|upgrade|limit|too many|frequen/i.test(msg)) throw new KalodataWebError(msg, path, "quota");
       if (/login|unauthori|session/i.test(msg)) throw new KalodataWebError(`${msg} — run \`npm run kalo:login\``, path, "session");
       if (/not found|no data/i.test(msg)) return { ...env, success: true, data: [] as T };
       if (attempt >= maxAttempts) throw new KalodataWebError(msg, path, "other");
@@ -124,6 +138,7 @@ export class KalodataWebClient {
       },
       { path, body },
     );
+    if (res.status === 429) throw new KalodataWebError("HTTP 429 — Kalodata giới hạn tần suất, dừng crawl", path, "quota");
     if (res.status === 401 || res.status === 403) {
       throw new KalodataWebError(`HTTP ${res.status} — run \`npm run kalo:login\``, path, "session");
     }
@@ -140,12 +155,9 @@ export class KalodataWebClient {
         created_at: { $gt: new Date(Date.now() - ms) },
       });
 
-    while ((await networkCallsSince(24 * 3_600_000)) >= PACE.perDay) {
-      if (!PACE.waitOnCap) {
-        throw new KalodataWebError(`daily cap ${PACE.perDay} reached — resume tomorrow`, path, "daily_cap");
-      }
-      console.log(`  pacing: daily cap ${PACE.perDay} reached at ${new Date().toLocaleString("vi-VN")}, sleeping 30 min…`);
-      await new Promise((r) => setTimeout(r, 30 * 60_000));
+    // Chạm trần ngày → DỪNG (không ngủ chờ): lượt sau chạy lại khi người vận hành bật
+    if ((await networkCallsSince(24 * 3_600_000)) >= PACE.perDay) {
+      throw new KalodataWebError(`daily cap ${PACE.perDay} reached — crawl dừng, chạy lại sau khi trần 24h có chỗ trống`, path, "daily_cap");
     }
     while ((await networkCallsSince(3_600_000)) >= PACE.perHour) {
       console.log(`  pacing: ${PACE.perHour}/h reached, waiting 5 min…`);

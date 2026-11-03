@@ -1,12 +1,13 @@
 "use client";
 
 import { ArrowUp, AtSign, Flame, Loader2, RefreshCw, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import type { ChatMessage } from "@/lib/chat";
 import type { AskEvent, StepKind, StepPayload } from "@/lib/chat-events";
 import { AI_NAME } from "@/lib/brand";
-import { TolaMark } from "@/components/tola-mark";
+import { TolaOrb } from "@/components/tola-mark";
+import type { TolaSubject } from "@/lib/data/queries";
 import { AgentMessage, hasStepBody, StepBody, StepCard } from "@/components/ask-bar";
 
 type Shown = ChatMessage & { pending?: boolean };
@@ -33,20 +34,44 @@ const EXAMPLES = [
  * Trả lời đi theo luồng NDJSON (`/api/tola/ask`) nên từng thẻ công cụ hiện dần; chờ cả phút mà màn
  * hình đứng im thì người dùng tưởng hỏng và bỏ đi.
  */
-export function TolaChat({ initialMessages = [], threadId: initialThread }: { initialMessages?: ChatMessage[]; threadId?: string }) {
+/** Gợi ý khi đang hỏi về một KOC cụ thể (mở từ trang hồ sơ) — cùng bộ với popup ở trang KOC. */
+const KOC_EXAMPLES = [
+  "Đánh giá khả năng bán hàng, so với creator cùng tầm thế nào?",
+  "Chủ yếu bán danh mục và sản phẩm nào?",
+  "Chất lượng nội dung và cách review sản phẩm ra sao?",
+  "Doanh thu có ổn định trong 30 ngày không?",
+  "Chi phí hợp tác ước tính bao nhiêu một video?",
+];
+
+export function TolaChat({
+  initialMessages = [],
+  threadId: initialThread,
+  subject: initialSubject,
+  initialQuestion,
+}: {
+  initialMessages?: ChatMessage[];
+  threadId?: string;
+  /** Câu hỏi mang sang qua `/tola?q=` — gửi ngay khi mở màn. */
+  initialQuestion?: string;
+  /** KOC mang sang từ trang hồ sơ (`/tola?koc=`): mọi câu hỏi tự gắn `@handle` + gửi `creatorId`. */
+  subject?: TolaSubject;
+}) {
+  const [subject, setSubject] = useState(initialSubject);
   const [threadId, setThreadId] = useState(initialThread);
   const [messages, setMessages] = useState<Shown[]>(initialMessages as Shown[]);
   const [live, setLive] = useState<{ question: string; steps: LiveStep[] } | null>(null);
   const [showTips, setShowTips] = useState(true);
-  const [tips, setTips] = useState(() => EXAMPLES.slice(0, 3));
+  const [tips, setTips] = useState(() => (initialSubject ? KOC_EXAMPLES : EXAMPLES).slice(0, 3));
   const taRef = useRef<HTMLTextAreaElement>(null);
   const busy = live !== null;
   const router = useRouter();
   const path = usePathname();
 
   const ask = async (text: string) => {
-    const q = text.trim();
+    let q = text.trim();
     if (!q || busy) return;
+    // Như popup ở trang KOC: gắn `@handle` để câu hỏi tự nói rõ đang hỏi về ai (mở lại vẫn hiểu)
+    if (subject?.handle && !q.toLowerCase().includes(`@${subject.handle.toLowerCase()}`)) q = `${q} @${subject.handle}`;
     setLive({ question: q, steps: [] });
     if (taRef.current) taRef.current.value = "";
 
@@ -56,7 +81,7 @@ export function TolaChat({ initialMessages = [], threadId: initialThread }: { in
       const res = await fetch("/api/tola/ask", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text: q, threadId: id }),
+        body: JSON.stringify({ text: q, threadId: id, ...(subject ? { creatorId: subject.id } : {}) }),
       });
       if (!res.body) throw new Error("không có luồng trả về");
       const reader = res.body.getReader();
@@ -125,16 +150,23 @@ export function TolaChat({ initialMessages = [], threadId: initialThread }: { in
     }
   };
 
+  // Gửi câu hỏi mang sang từ trang khác đúng MỘT lần (ref chặn lần chạy đôi của StrictMode ở dev)
+  const sentInitial = useRef(false);
+  useEffect(() => {
+    if (!initialQuestion || sentInitial.current) return;
+    sentInitial.current = true;
+    void ask(initialQuestion);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chỉ chạy lúc mở màn
+  }, []);
+
   const empty = messages.length === 0 && !live;
 
   return (
     <div className="mx-auto flex w-full max-w-[820px] flex-1 flex-col px-4 pb-6 pt-6 sm:px-6">
       {empty && (
         <div className="pb-6 pt-8 text-center">
-          <span className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-b from-[#454cab] to-[#1b1d4d] text-white shadow-[0_8px_22px_-8px_rgb(27_29_77_/_0.7)]">
-            <TolaMark size={28} />
-          </span>
-          <h1 className="text-[20px] font-bold tracking-tight">Chỉ cần hỏi – nhận ngay</h1>
+          <TolaOrb size={64} className="mx-auto mb-3" />
+          <h1 className="text-[20px] font-bold tracking-tight">{subject ? `Hỏi gì về ${subject.name}?` : "Chỉ cần hỏi – nhận ngay"}</h1>
           <p className="mt-1 text-[14px] font-semibold text-brand">Insight từ dữ liệu TikTok thật</p>
         </div>
       )}
@@ -146,7 +178,7 @@ export function TolaChat({ initialMessages = [], threadId: initialThread }: { in
               <div className="max-w-[80%] rounded-2xl bg-zinc-100 px-4 py-3 text-[14.5px] leading-relaxed">{m.text}</div>
             </div>
           ) : (
-            <div key={m.id} className="rounded-2xl border border-line bg-white px-4 py-3">
+            <div key={m.id} className="py-1">
               {m.agent && (m.markdown || m.blocks?.length) ? <AgentMessage m={m} onAsk={(q) => void ask(q)} /> : <p className="text-[14.5px] leading-relaxed">{m.text}</p>}
             </div>
           ),
@@ -157,7 +189,7 @@ export function TolaChat({ initialMessages = [], threadId: initialThread }: { in
             <div className="flex justify-end">
               <div className="max-w-[80%] rounded-2xl bg-zinc-100 px-4 py-3 text-[14.5px] leading-relaxed">{live.question}</div>
             </div>
-            <div className="space-y-2 rounded-2xl border border-line bg-white px-4 py-3">
+            <div className="space-y-2 py-1">
               {live.steps.map((s, i) => (
                 <StepCard key={i} index={i} title={s.title} detail={s.detail} done={s.done} running={!s.done} animate>
                   {/* Dẫn chứng của bước hiện NGAY lúc chạy: bảng kết quả công cụ, video AI đã xem, link web */}
@@ -182,7 +214,8 @@ export function TolaChat({ initialMessages = [], threadId: initialThread }: { in
       </div>
 
       {/* ── Ô nhập ── */}
-      <div className="sticky bottom-20 mt-5 lg:bottom-0">
+      {/* Ghim sát đáy; nền + vùng an toàn iPhone để chữ cuộn phía sau không lộ qua */}
+      <div className="sticky bottom-0 -mx-4 mt-5 bg-page/95 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur sm:-mx-6 sm:px-6">
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -190,6 +223,19 @@ export function TolaChat({ initialMessages = [], threadId: initialThread }: { in
           }}
           className="rounded-2xl border border-line bg-white px-4 py-3 shadow-sm"
         >
+          {subject && (
+            <div className="mb-2 flex">
+              <span className="inline-flex max-w-full items-center gap-1 rounded-full bg-brand-soft py-1 pl-2.5 pr-1 text-[12.5px] font-medium text-brand-strong">
+                <span className="truncate">Đang hỏi về @{subject.handle}</span>
+                <button type="button" aria-label="Bỏ KOC này" title="Hỏi chung, không gắn KOC" onClick={() => {
+                    setSubject(undefined);
+                    setTips(EXAMPLES.slice(0, 3));
+                  }} className="grid h-5 w-5 shrink-0 place-items-center rounded-full hover:bg-white/70">
+                  <X size={12} />
+                </button>
+              </span>
+            </div>
+          )}
           <textarea
             ref={taRef}
             rows={2}
@@ -236,7 +282,7 @@ export function TolaChat({ initialMessages = [], threadId: initialThread }: { in
               <button
                 type="button"
                 aria-label="Đổi gợi ý khác"
-                onClick={() => setTips(() => [...EXAMPLES].sort(() => Math.random() - 0.5).slice(0, 3))}
+                onClick={() => setTips(() => [...(subject ? KOC_EXAMPLES : EXAMPLES)].sort(() => Math.random() - 0.5).slice(0, 3))}
                 className="ml-auto grid h-7 w-7 place-items-center rounded-lg text-ink-muted hover:bg-zinc-100"
               >
                 <RefreshCw size={13} />

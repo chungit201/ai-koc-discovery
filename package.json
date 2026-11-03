@@ -28,7 +28,10 @@
     "reset:test": "tsx --conditions=react-server --env-file=.env.local scripts/reset-test.ts",
     "bench": "tsx --conditions=react-server --env-file=.env.local scripts/bench.ts",
     "s5": "tsx --conditions=react-server --env-file=.env.local scripts/s5.ts",
-    "top-kocs": "tsx --env-file=.env.local scripts/top-kocs.ts"
+    "top-kocs": "tsx --env-file=.env.local scripts/top-kocs.ts",
+    "crawl:creator-shops": "tsx --env-file=.env.local scripts/crawl-creator-shops.ts",
+    "tola:eval": "tsx --env-file=.env.local scripts/tola-eval.ts",
+    "crawl:video-products": "tsx --env-file=.env.local scripts/crawl-video-products.ts"
   },
   "dependencies": {
     "lucide-react": "^1.66.0",

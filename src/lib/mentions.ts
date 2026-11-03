@@ -33,6 +33,23 @@ export interface MentionResult {
 
 export const handlesIn = (text: string): string[] => [...new Set([...text.matchAll(MENTION)].map((m) => m[1].toLowerCase()))];
 
+const PROJECTION = { handle: 1, nickname: 1, followers: 1, detail_updated_at: 1 };
+
+const toMentioned = (d: Record<string, unknown>): Mentioned => ({
+  creator_id: String(d._id),
+  handle: String(d.handle ?? "").replace(/^@/, ""),
+  name: String(d.nickname || d.handle || d._id),
+  followers: typeof d.followers === "number" ? d.followers : null,
+  has_detail: Boolean(d.detail_updated_at),
+});
+
+/** KOC theo id — popup ở trang hồ sơ KOC gửi kèm id của trang thay cho tag `@handle`. */
+export async function mentionById(creatorId: string): Promise<Mentioned | null> {
+  const db = await getDb();
+  const d = await db.collection(C.creators).findOne({ _id: creatorId as never }, { projection: PROJECTION });
+  return d ? toMentioned(d) : null;
+}
+
 export async function resolveMentions(text: string): Promise<MentionResult> {
   const handles = handlesIn(text);
   if (!handles.length) return { found: [], missing: [] };
@@ -41,16 +58,10 @@ export async function resolveMentions(text: string): Promise<MentionResult> {
   // `creators.handle` lưu kèm "@" — tìm cả hai dạng cho chắc
   const docs = await db
     .collection(C.creators)
-    .find({ handle: { $in: handles.flatMap((h) => [h, `@${h}`]) } }, { projection: { handle: 1, nickname: 1, followers: 1, detail_updated_at: 1 } })
+    .find({ handle: { $in: handles.flatMap((h) => [h, `@${h}`]) } }, { projection: PROJECTION })
     .toArray();
 
-  const found: Mentioned[] = docs.map((d) => ({
-    creator_id: String(d._id),
-    handle: String(d.handle ?? "").replace(/^@/, ""),
-    name: String(d.nickname || d.handle || d._id),
-    followers: typeof d.followers === "number" ? d.followers : null,
-    has_detail: Boolean(d.detail_updated_at),
-  }));
+  const found: Mentioned[] = docs.map(toMentioned);
   const got = new Set(found.map((f) => f.handle.toLowerCase()));
   return { found, missing: handles.filter((h) => !got.has(h)) };
 }

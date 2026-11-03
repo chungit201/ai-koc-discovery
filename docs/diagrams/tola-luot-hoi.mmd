@@ -1,0 +1,19 @@
+flowchart TD
+  U([Câu hỏi người dùng]) --> R["/api/tola/ask<br/>(route.ts)"]
+  R --> H[Đọc 8 tin gần nhất + campaign_id<br/>của hội thoại từ tola_chats]
+  H --> M["Giải nghĩa @handle → creator_id<br/>(+ creatorId nếu hỏi từ trang KOC)"]
+  M --> AG1["Chặng 1 · Agent Tola đọc & HIỂU câu hỏi<br/>🤖 Sonnet + MCP 'koc'"]
+  AG1 -- "tra cứu / xếp hạng / so sánh<br/>→ tự gọi công cụ đọc DB" --> V
+  AG1 -- "brief tuyển KOC<br/>→ gọi start_campaign_analysis(brief)" --> D
+
+  subgraph D [Chặng 2 · Phân tích sâu — tola-deep.ts]
+    D1["Hiểu yêu cầu<br/>🤖 Haiku: brief → tiêu chí + kế hoạch<br/>→ tạo campaigns"] --> D2["S2 Chấm điểm<br/>⚙ code thuần, 0 token"]
+    D2 --> D3["S3 Sàng lọc nội dung<br/>🤖 Haiku đọc bio/tiêu đề/SP"]
+    D3 --> D4["S4 Xem khung hình video<br/>🤖 Sonnet vision"]
+    D4 --> D5["S5 Đề xuất<br/>⚙ code chọn + chia ngân sách<br/>🤖 Haiku viết lý do → validator"]
+  end
+  D --> AG3["Chặng 3 · Agent Tola báo cáo kết quả<br/>campaign_context → viết đề xuất"]
+  AG3 --> V
+
+  V["Kiểm chứng ⚙ code<br/>số liệu ±2%, link TikTok, trích dẫn"] --> S[(Lưu tola_chats)]
+  V --> UI([Stream NDJSON về giao diện])

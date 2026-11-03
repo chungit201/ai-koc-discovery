@@ -57,7 +57,7 @@ export class Checkpoint {
       });
       // Fatal errors (e.g. account locked) abort the whole run instead of moving to the next item
       const kind = (err as { kind?: string }).kind;
-      if (kind === "locked" || kind === "daily_cap" || kind === "session") throw err;
+      if (kind === "locked" || kind === "daily_cap" || kind === "quota" || kind === "session") throw err; // quota/limit: dừng cả lượt, không bỏ qua sang item sau
       return false;
     }
   }

@@ -5,7 +5,7 @@ import { C } from "../db/collections";
 
 /**
  * Campaign-independent AI analyses of one KOC (or video), cached by
- * (subject_id, content_hash, model_id, prompt_version) — docs/01-plan.md principle 6.
+ * (subject_id, content_hash, model_id, prompt_version) — docs/02-tola-ai.md.
  * Same content + same model + same prompt → reuse (0 tokens). Anything changes → new row; old rows stay.
  */
 export interface Assessment<T> {

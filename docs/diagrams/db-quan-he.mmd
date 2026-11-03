@@ -1,0 +1,17 @@
+erDiagram
+  creators ||--o{ creator_metrics : creator_id
+  creators ||--o{ creator_products : creator_id
+  creators ||--o{ videos : creator_id
+  creators ||--o| avatars : "_id"
+  creators ||--o| favorites : "_id"
+  products ||--o{ creator_products : product_id
+  products }o--o{ videos : product_ids
+  shops ||--o{ products : seller_id
+  videos ||--o| video_media : "_id"
+  campaigns ||--o{ campaign_scores : campaign_id
+  campaigns ||--o{ evidence : campaign_id
+  campaigns ||--o{ tola_chats : campaign_id
+  creators ||--o{ campaign_scores : creator_id
+  creators ||--o{ evidence : creator_id
+  crawl_runs ||--o{ stage_items : run_id
+  crawl_runs ||--o{ api_calls : run_id

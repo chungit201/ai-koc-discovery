@@ -1,5 +1,5 @@
 /**
- * Thử một công cụ của agent KOC (docs/10-koc-agent.md, P2) trên dữ liệu thật, không qua LLM.
+ * Thử một công cụ của agent KOC (docs/02-tola-ai.md) trên dữ liệu thật, không qua LLM.
  *   npm run koc:tool -- <tool|all> <creator_id|@handle> ['{"limit":5}'] [--rows]
  * Phiên mặc định "cli"; bằng chứng ghi vào `evidence` với session_id này.
  */

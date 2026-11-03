@@ -11,7 +11,13 @@ const cover = (id: string) => `https://img.kalocdn.com/tiktok.video/${id}/cover.
  * The MP4 is resolved and streamed by our own `/api/video/[id]/play` (tikwm, same as the
  * video-downloader project) because TikTok's embed players refuse to load here.
  */
-export function VideoThumb({ id, title, tiktokUrl }: { id: string; title: string; tiktokUrl: string }) {
+/** "1m 3s" / "54s" — cùng cách Kalodata ghi thời lượng trên ảnh bìa. */
+const fmtDuration = (sec: number) => {
+  const s = Math.round(sec);
+  return s >= 60 ? `${Math.floor(s / 60)}m${s % 60 ? ` ${s % 60}s` : ""}` : `${s}s`;
+};
+
+export function VideoThumb({ id, title, tiktokUrl, durationSec }: { id: string; title: string; tiktokUrl: string; durationSec?: number | null }) {
   const [open, setOpen] = useState(false);
   const [broken, setBroken] = useState(false);
 
@@ -39,6 +45,9 @@ export function VideoThumb({ id, title, tiktokUrl }: { id: string; title: string
             <Play size={13} fill="currentColor" className="ml-0.5" />
           </span>
         </span>
+        {durationSec ? (
+          <span className="num absolute bottom-1 left-1 rounded bg-black/60 px-1 text-[10px] font-semibold leading-4 text-white">{fmtDuration(durationSec)}</span>
+        ) : null}
       </button>
 
       {open && <VideoModal id={id} title={title} tiktokUrl={tiktokUrl} onClose={() => setOpen(false)} />}

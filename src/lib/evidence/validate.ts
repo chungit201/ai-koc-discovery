@@ -1,5 +1,5 @@
 /**
- * Anti-hallucination gate for LLM-written reasons (docs/04-data-model.md §3.1).
+ * Anti-hallucination gate for LLM-written reasons (docs/02-tola-ai.md §5).
  * A reason survives only if it cites ≥1 evidence id that really belongs to that KOC, and every
  * number it mentions appears in one of the cited evidence claims (numbers come from code, never the LLM).
  */

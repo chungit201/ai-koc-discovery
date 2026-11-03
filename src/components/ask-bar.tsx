@@ -9,8 +9,11 @@ import type { AnswerBlock, AskEvent, ReportData, StepKind, StepPayload, ToolTabl
 import { AnswerMarkdown } from "@/components/answer-markdown";
 import { Avatar } from "@/components/avatar";
 import { ProductThumb } from "@/components/product-thumb";
+import { ShopLogo } from "@/components/shop-logo";
 import { VideoThumb } from "@/components/video-thumb";
 import { compact, tiktokVideo, vnd } from "@/lib/format";
+import { TolaOrb } from "@/components/tola-mark";
+import { AI_NAME } from "@/lib/brand";
 
 type Shown = ChatMessage & { pending?: boolean };
 
@@ -27,7 +30,15 @@ interface LiveStep {
 interface Live {
   question: string;
   steps: LiveStep[];
-  conclusion?: { text: string; reasons: NonNullable<ChatMessage["reasons"]>; blocks?: AnswerBlock[]; follow_ups?: string[] };
+  conclusion?: {
+    text: string;
+    reasons: NonNullable<ChatMessage["reasons"]>;
+    blocks?: AnswerBlock[];
+    follow_ups?: string[];
+    /** Câu trả lời của agent Tola (markdown + chip nguồn), thay cho `blocks`. */
+    markdown?: string;
+    unverified?: string[];
+  };
   running: boolean;
   /** Chế độ agent: bước thêm dần theo từng lần gọi công cụ, không có kế hoạch định sẵn để bày. */
   agent?: boolean;
@@ -71,7 +82,12 @@ function applyEvent(set: React.Dispatch<React.SetStateAction<Live | null>>, e: A
         return { ...prev, steps };
       }
       case "conclusion":
-        return { ...prev, conclusion: { text: e.text, reasons: e.reasons, blocks: e.blocks, follow_ups: e.follow_ups } };
+        // Bài markdown của Tola hiện ngay, không chảy chữ → coi như đã "chảy" xong để đổi sang bản lưu
+        return {
+          ...prev,
+          conclusion: { text: e.text, reasons: e.reasons ?? [], blocks: e.blocks, follow_ups: e.follow_ups, markdown: e.markdown, unverified: e.unverified },
+          ...(e.markdown ? { revealed: true } : {}),
+        };
       case "done":
         return { ...prev, running: false };
       case "error":
@@ -158,8 +174,9 @@ export function AskBar({
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  // null = đang ở màn hình "cuộc trò chuyện mới"
-  const [activeId, setActiveId] = useState<string | null>(threads[0]?.id ?? null);
+  // null = đang ở màn hình "cuộc trò chuyện mới" — mặc định khi vào trang KOC: lịch sử dùng chung với
+  // /tola nên cuộc gần nhất thường là về KOC khác, không mở sẵn nó
+  const [activeId, setActiveId] = useState<string | null>(null);
   const active = threads.find((t) => t.id === activeId) ?? null;
   /** Lượt đang chạy: hiện dần theo luồng sự kiện từ server. */
   const [live, setLive] = useState<Live | null>(null);
@@ -204,7 +221,11 @@ export function AskBar({
   const cur = swapped || live?.threadId !== activeId ? null : live;
 
   const send = async (text: string, threadId: string | null) => {
-    const trimmed = text.trim();
+    // Như Kalodata: gắn `@handle` của KOC đang xem vào câu hỏi để thấy rõ đang hỏi về ai (khi mở lại
+    // từ /tola vẫn hiểu đúng ngữ cảnh). Đã tag sẵn thì thôi.
+    const tag = subjectHandle.replace(/^@/, "");
+    let trimmed = text.trim();
+    if (trimmed && tag && !trimmed.toLowerCase().includes(`@${tag.toLowerCase()}`)) trimmed = `${trimmed} @${tag}`;
     if (!trimmed || live?.running) return;
     const id = threadId ?? crypto.randomUUID();
     setActiveId(id);
@@ -269,10 +290,11 @@ export function AskBar({
     })();
 
     try {
-      const res = await fetch(`/api/kocs/${subjectId}/ask`, {
+      // Dùng chung agent + lịch sử với trang /tola; KOC của trang này đi kèm làm ngữ cảnh
+      const res = await fetch("/api/tola/ask", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text: trimmed, threadId: id }),
+        body: JSON.stringify({ text: trimmed, threadId: id, creatorId: subjectId }),
       });
       if (!res.body) throw new Error("Không nhận được luồng trả lời");
       const reader = res.body.getReader();
@@ -308,10 +330,22 @@ export function AskBar({
     <>
       {/* Thanh nổi ở đáy màn hình */}
       {!open && (
-        <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-5">
+                // Chỉ desktop: trên mobile hỏi bằng nút Tola ở thanh dưới → mở /tola?koc=<id> (màn chat đầy đủ)
+        <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 hidden justify-center px-4 pb-5 lg:flex">
           {/* Chấm đỏ trên nút phóng to đã cho biết số cuộc trò chuyện → không cần chip riêng */}
           <div className="pointer-events-auto w-full max-w-[760px]">
-            <Composer placeholder={placeholder} onSend={(t) => send(t, activeId)} rounded onExpand={() => setOpen(true)} badge={threads.length} busy={live?.running} />
+            <Composer
+              placeholder={placeholder}
+              // Thanh nổi luôn mở cuộc mới về KOC này; muốn hỏi tiếp cuộc cũ thì phóng to rồi chọn trong lịch sử
+              onSend={(t) => send(t, null)}
+              rounded
+              onExpand={() => {
+                if (!live?.running) setActiveId(null);
+                setOpen(true);
+              }}
+              badge={threads.length}
+              busy={live?.running}
+            />
           </div>
         </div>
       )}
@@ -352,11 +386,9 @@ export function AskBar({
               {/* Khung hội thoại */}
               <div className="flex min-w-0 flex-1 flex-col">
                 <div className="flex items-center gap-2.5 border-b border-line px-5 py-3.5">
-                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-brand to-brand-strong text-white">
-                    <Sparkles size={16} />
-                  </span>
+                  <TolaOrb size={34} />
                   <div className="min-w-0 flex-1">
-                    <h2 className="truncate text-[15px] font-semibold">Hỏi đáp với AI{subjectName ? ` · ${subjectName}` : ""}</h2>
+                    <h2 className="truncate text-[15px] font-semibold">Hỏi {AI_NAME}{subjectName ? ` · ${subjectName}` : ""}</h2>
                     <p className="text-[12px] text-ink-muted">Trả lời từ dữ liệu đã thu thập, mỗi ý đều dẫn bằng chứng</p>
                   </div>
                   <button type="button" onClick={() => setOpen(false)} aria-label="Đóng" className="grid h-8 w-8 place-items-center rounded-lg text-ink-muted hover:bg-zinc-100">
@@ -424,6 +456,8 @@ function Bubble({ m, handle, onAsk }: { m: Shown; handle: string; onAsk: (q: str
         <div className="max-w-[80%] rounded-2xl bg-zinc-100 px-4 py-2.5 text-[14.5px] leading-relaxed">{m.text}</div>
       </div>
     );
+  // Câu trả lời của agent Tola (lịch sử chung với /tola) → hiện y như trang /tola
+  if (m.agent && m.markdown) return <AgentMessage m={m} handle={handle} onAsk={onAsk} />;
   // Việc nhẹ: khi mở lại cũng chỉ hiện câu trả lời, không dựng lại quy trình cho có
   if (m.steps?.length && !m.agent && !isHeavy(m.steps as { kind: StepKind }[]))
     return (
@@ -525,7 +559,7 @@ export function AgentMessage({ m, handle = "", onAsk }: { m: ChatMessage; handle
     <div className="space-y-2">
       {/* Mở sẵn: đây là phần cho người bán thấy AI đã làm gì để tin con số phía dưới — bắt bấm mới
           hiện thì phần lớn sẽ không ai bấm. Vẫn gập được nếu thấy dài. */}
-      <details open className="group rounded-xl border border-line bg-zinc-50/60 px-3 py-2">
+      <details open className="group rounded-xl border border-line bg-zinc-100 px-3 py-2">
         <summary className="cursor-pointer select-none text-[12.5px] font-medium text-ink-muted">
           Quá trình xử lý · {(m.steps ?? []).filter((s) => s.kind !== "conclusion").length} bước phân tích
         </summary>
@@ -648,7 +682,7 @@ function LiveAnswer({ live, handle, onAsk, onRevealed }: { live: Live; handle: s
             </StepCard>
             {/* Luôn gõ chữ ở lượt đang chạy: `done` tới ngay sau `conclusion` nên nếu phụ thuộc
                 `live.running` thì typewriter tắt trước khi kịp render */}
-            {s.kind === "conclusion" && s.done && live.conclusion && (
+            {s.kind === "conclusion" && s.done && live.conclusion && !live.conclusion.markdown && (
               <>
                 {live.conclusion.blocks?.length ? (
                   <Answer
@@ -674,6 +708,12 @@ function LiveAnswer({ live, handle, onAsk, onRevealed }: { live: Live; handle: s
       })}
       {/* Agent: một dòng trạng thái CỐ ĐỊNH ở cuối khi đang chờ lượt suy nghĩ tiếp theo (giữa hai lần gọi
           công cụ). Bản cũ bật/tắt dòng này ở đầu danh sách nên cả khối nhảy lên xuống. */}
+      {live.conclusion?.markdown && (
+        <>
+          <AnswerMarkdown markdown={live.conclusion.markdown} unverified={live.conclusion.unverified} sources={sourcesOf(live.steps, "live")} />
+          {followUps}
+        </>
+      )}
       {live.agent && live.running && !current && live.steps.length > 0 && !live.conclusion && (
         <p className="flex items-center gap-2 text-[13.5px] text-ink-muted">
           <Loader2 size={14} className="animate-spin text-brand" /> Đang đọc kết quả, quyết định bước tiếp…
@@ -958,6 +998,32 @@ function ToolTableView({ table, handle, compact: small }: { table: ToolTable; ha
       </div>
     );
 
+  if (table.tool === "list_shops")
+    return (
+      <div className={frame}>
+        <table className="w-full text-[12.5px]">
+          <tbody>
+            {rows.map((r) => (
+              <tr key={s(r.seller_id)} className="border-t border-line first:border-t-0">
+                <td className="num w-8 px-3 py-2 text-ink-muted">{s(r.rank)}</td>
+                <td className="w-12 py-2 pl-1">
+                  <ShopLogo sellerId={s(r.seller_id)} name={s(r.shop)} />
+                </td>
+                <td className="px-3 py-2">
+                  <span className="line-clamp-1 font-medium">{s(r.shop)}</span>
+                  <span className="text-[11.5px] text-ink-muted">{s(r.type)} · {compact(n(r.products))} sản phẩm</span>
+                </td>
+                <td className="num w-36 px-3 py-2 text-right">
+                  {vnd(n(r.revenue))} <span className="text-ink-muted">· {share(r.share)}</span>
+                  <div className="text-ink-muted">{compact(n(r.orders))} đơn</div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+
   if (table.tool === "category_breakdown")
     return (
       <div className={frame}>
@@ -1018,7 +1084,7 @@ function ToolTableView({ table, handle, compact: small }: { table: ToolTable; ha
    */
   if (table.tool === "analyze_videos" || table.tool === "campaign_videos")
     return (
-      <div className={`space-y-2 ${small ? "max-h-[360px] overflow-y-auto" : ""}`}>
+      <div className={`space-y-2 ${small ? "max-h-[max(640px,80vh)] overflow-y-auto" : ""}`}>
         {rows.map((v) => {
           const frames = (v.frames as unknown as { i: number; note: string }[]) ?? [];
           const risks = (v.risks as unknown as string[]) ?? [];
@@ -1477,9 +1543,7 @@ function Products({ items }: { items: NonNullable<ChatMessage["products"]> }) {
 function Welcome({ subjectName, suggestions, onPick }: { subjectName?: string; suggestions: string[]; onPick: (text: string) => void }) {
   return (
     <div className="mx-auto flex max-w-[640px] flex-col items-center py-14 text-center">
-      <span className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-brand to-brand-strong text-white">
-        <Sparkles size={22} />
-      </span>
+      <TolaOrb size={56} />
       <h3 className="mt-4 text-[22px] font-bold tracking-tight">Hỏi gì về {subjectName ?? "KOC này"}?</h3>
       <p className="mt-1.5 text-[13.5px] text-ink-muted">Mình trả lời từ dữ liệu đã thu thập và phân tích video — mỗi kết luận đều dẫn bằng chứng</p>
       {/* Thẻ có viền + nền: nhìn là biết bấm được, khác hẳn dòng chữ trơn */}
@@ -1501,7 +1565,7 @@ function Welcome({ subjectName, suggestions, onPick }: { subjectName?: string; s
   );
 }
 
-function Composer({
+export function Composer({
   placeholder,
   onSend,
   rounded,
@@ -1536,9 +1600,7 @@ function Composer({
       }}
       className={`flex items-center gap-2 border border-line bg-white py-2 pl-2 pr-2.5 ${rounded ? "rounded-full shadow-[var(--shadow-pop)]" : "rounded-2xl"}`}
     >
-      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-gradient-to-br from-brand to-brand-strong text-white">
-        <Sparkles size={16} />
-      </span>
+      <TolaOrb size={36} />
       <input
         name="text"
         autoComplete="off"

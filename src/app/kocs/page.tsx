@@ -4,7 +4,8 @@ import { Avatar } from "@/components/avatar";
 import { Sparkline } from "@/components/charts/sparkline";
 import { FilterSelect } from "@/components/filter-select";
 import { FilterDrawer } from "@/components/filter-drawer";
-import { TolaMark } from "@/components/tola-mark";
+import { TolaOrb } from "@/components/tola-mark";
+import { TolaAskBar } from "@/components/tola-ask-bar";
 import { AI_NAME } from "@/lib/brand";
 import { KocActions } from "@/components/koc-actions";
 import { ScrollShadows } from "@/components/scroll-shadows";
@@ -109,7 +110,8 @@ export default async function KocsPage({ searchParams }: { searchParams: Promise
   const sortLabel = SORTS.find((s) => s.value === filters.sort)?.label.toLowerCase() ?? "doanh thu";
 
   return (
-    <main className="mx-auto w-full max-w-[1760px] space-y-5 px-4 py-5 sm:space-y-6 sm:px-6 sm:py-6 lg:px-8 lg:py-8 xl:px-10">
+    // lg:pb-28: chừa chỗ cho ô hỏi Tola nổi ở đáy (chỉ desktop)
+    <main className="mx-auto w-full max-w-[1760px] space-y-5 px-4 py-5 sm:space-y-6 sm:px-6 sm:py-6 lg:px-8 lg:pb-28 lg:pt-8 xl:px-10">
       {/* ── Header: title left, primary CTA top-right ── */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -123,7 +125,7 @@ export default async function KocsPage({ searchParams }: { searchParams: Promise
           href="/tola"
           className="hidden h-10 items-center gap-2 rounded-xl bg-gradient-to-b from-[#454cab] to-[#1b1d4d] px-4 text-[13px] font-semibold text-white shadow-[var(--shadow-pop)] transition hover:brightness-110 lg:flex"
         >
-          <TolaMark size={16} /> Hỏi {AI_NAME}
+          <TolaOrb size={24} /> Hỏi {AI_NAME}
         </Link>
       </div>
 
@@ -320,6 +322,8 @@ export default async function KocsPage({ searchParams }: { searchParams: Promise
           </div>
         </div>
       </section>
+
+      <TolaAskBar placeholder="Hỏi Tola: KOC nào bán kem chống nắng tốt nhất, ai đang tăng trưởng mạnh…" />
     </main>
   );
 }

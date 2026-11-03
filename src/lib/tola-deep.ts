@@ -1,7 +1,6 @@
 import "server-only";
 import { getDb } from "./db/mongo";
 import { C } from "./db/collections";
-import { claude } from "./llm/claude";
 import { createCampaignFromBrief } from "./campaign-create";
 import { scoreCampaign } from "./scoring/run";
 import { runS3 } from "./pipeline/s3-content";
@@ -17,46 +16,10 @@ import type { Capability } from "./plan";
  *
  * Chạy ở tiến trình Next (route handler) chứ không trong tiến trình MCP — tiến trình con của agent
  * chết ngay sau lượt hỏi, pipeline sẽ bị giết giữa chừng.
+ *
+ * KHI NÀO chạy do chính agent Tola quyết: nó gọi công cụ `start_campaign_analysis(brief)`, route nhận
+ * brief rồi gọi `runDeepSearch`. Không còn bước phân loại riêng (regex + Haiku) đoán thay agent.
  */
-
-const CLASSIFY_VERSION = "tola-route-v1";
-
-const CLASSIFY_SYSTEM = `[${CLASSIFY_VERSION}] Phân loại yêu cầu của người bán hàng mỹ phẩm TikTok. Trả về DUY NHẤT một từ:
-
-deep  — họ muốn TUYỂN KOC cho một chiến dịch: nêu sản phẩm cần quảng bá, kèm số KOC cần / ngân sách /
-        khán giả mục tiêu / yêu cầu về chất lượng review. Ví dụ: "tìm 5 KOC bán kem chống nắng, nữ
-        18-30, ngân sách 30 triệu", "cần 10 KOC trang điểm chưa ký MCN".
-quick — tra cứu, xếp hạng, so sánh, hỏi về một KOC cụ thể, hỏi thông tin ngoài dữ liệu. Ví dụ: "KOC
-        nào doanh thu cao nhất", "@phuongsena bán gì nhiều nhất", "ai đang tăng trưởng mạnh".
-
-Mấu chốt: "deep" là khi họ sắp CHI TIỀN hợp tác và cần danh sách có bằng chứng; "quick" là khi họ
-chỉ muốn biết một con số hoặc một câu trả lời.`;
-
-/**
- * Brief tuyển KOC nhận ra được **bằng code**: có động từ đi tìm + số lượng KOC, hoặc có ngân sách đi
- * kèm từ "KOC". Đây là hàng rào chống chính sự bấp bênh của model: cùng một câu
- * ("tìm 5 KOC TikTok … ngân sách 30 triệu") có lần Haiku trả "deep", có lần trả "quick" — mà trả
- * "quick" thì cả pipeline S2→S5 không chạy, người bán nhận một câu tra cứu hời hợt thay vì danh sách
- * có bằng chứng. Bắt được ở đây thì khỏi gọi model luôn: nhanh hơn, 0 token, và tất định.
- */
-const FIND = /tìm|kiếm|cần|gợi ý|đề xuất|tuyển|book|chọn giúp|lên danh sách|shortlist/i;
-const HOW_MANY = /\b(\d{1,2})\s*(koc|kol|người|bạn|gương mặt|nhà sáng tạo|creator)\b/i;
-const BUDGET = /ngân sách|budget|\btriệu\b|\btr\b|\bvnđ?\b|\bvnd\b/i;
-const KOC_WORD = /\bkoc\b|\bkol\b|nhà sáng tạo|creator|tiktoker/i;
-export const looksLikeBrief = (text: string) => (FIND.test(text) && HOW_MANY.test(text)) || (BUDGET.test(text) && KOC_WORD.test(text) && FIND.test(text));
-
-/** Một câu hỏi có đáng chạy phân tích sâu (vài phút, vài chục cent) hay trả lời nhanh là đủ? */
-export async function classifyAsk(text: string): Promise<"deep" | "quick"> {
-  if (looksLikeBrief(text)) return "deep";
-  try {
-    const res = await claude({ system: CLASSIFY_SYSTEM, prompt: text, model: "haiku", purpose: "tola-classify" });
-    return /deep/i.test(res.text.slice(0, 40)) ? "deep" : "quick";
-  } catch (err) {
-    // Phân loại hỏng thì trả lời nhanh: thà kém sâu còn hơn âm thầm tiêu vài chục cent
-    console.error("[tola] phân loại lỗi, mặc định quick", err);
-    return "quick";
-  }
-}
 
 const RUNNING: Record<Capability, string> = {
   score_fit: "Lọc & chấm điểm toàn bộ KOC trong ngành",

@@ -60,7 +60,7 @@ export async function scoreCampaign(campaignId: string) {
   /**
    * Sản phẩm **gộp theo (KOC, product_id)** trước — `creator_products` có một dòng cho mỗi
    * `(product_id, date_range)`, KOC crawl 2 lần sẽ bị cộng đôi doanh thu nếu không gộp (lỗi đã sửa ở
-   * `productFacts`, docs/10-koc-agent.md P1; ở đây chấm cả pool nên gộp ngay trong một aggregate).
+   * `productFacts`, docs/02-tola-ai.md P1; ở đây chấm cả pool nên gộp ngay trong một aggregate).
    */
   const products = await db
     .collection(C.creatorProducts)

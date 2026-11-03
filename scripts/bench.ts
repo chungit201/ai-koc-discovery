@@ -1,10 +1,10 @@
 /**
- * Benchmark một chiến dịch mới từ đầu đến cuối (Step 9 của docs/01-plan.md).
+ * Benchmark một chiến dịch mới từ đầu đến cuối (Step 9 của docs/02-tola-ai.md).
  *
  *   npm run bench -- "<brief>" [--pass2]
  *
  * Tạo chiến dịch từ brief (S1 = 1 call Haiku), rồi chạy S2 → S5 tuần tự, đo
- * thời gian + token + chi phí từng bước và in JSON để dán vào docs/05-benchmark.md.
+ * thời gian + token + chi phí từng bước và in JSON để dán vào docs/02-tola-ai.md.
  * `--pass2` chạy lại toàn bộ pipeline trên cùng chiến dịch (sau khi xoá summary,
  * giữ nguyên cache AI) để đo phần "chạy lại = 0 token".
  */

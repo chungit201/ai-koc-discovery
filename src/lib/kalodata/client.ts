@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { Db } from "mongodb";
 import { C, type ApiCall, type RawResponse } from "../db/collections";
 
-// Pricing: docs/03-kalodata.md §2 — 1 credit ≈ 0.1 USD
+// Pricing: docs/04-crawl.md §6 — 1 credit ≈ 0.1 USD
 const USD_PER_CREDIT = 0.1;
 const RATE_LIMIT = { max: 90, windowMs: 10_000 }; // Kalodata allows 100 / 10s; keep headroom
 const THROTTLED = /traffic control|try again later|rate limit/i;

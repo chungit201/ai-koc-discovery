@@ -27,26 +27,33 @@ import { LineChart } from "@/components/charts/line-chart";
 import { VideoThumb } from "@/components/video-thumb";
 import { ProductThumb } from "@/components/product-thumb";
 import { KpiCard, Pill, SectionCard } from "@/components/kit";
-import { CATEGORY_NAMES, getKoc } from "@/lib/data/queries";
+import { CATEGORY_NAMES, getKoc, type VideoProductInfo } from "@/lib/data/queries";
+import { ProductHover } from "@/components/product-hover";
 import { compact, pct, tiktokProfile, tiktokVideo, vnd } from "@/lib/format";
 import { contactItems, type ContactItem } from "@/lib/contact";
 import { AskBar, type ChatThreadView } from "@/components/ask-bar";
+import { PagedTable } from "@/components/paged-table";
+import { ShopLogo } from "@/components/shop-logo";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- Mongo docs are schemaless here */
 
 export default async function KocDetail({
   params,
-  searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const { id } = await params;
-  const sp = await searchParams;
-  const showAll = { videos: sp.all === "videos", products: sp.all === "products" };
   const data = await getKoc(id);
   if (!data) notFound();
-  const { creator: c, metrics, products, videos, threads } = data as { creator: any; metrics: any[]; products: any[]; videos: any[]; threads: ChatThreadView[] };
+  const { creator: c, metrics, products, videos, shops, threads, videoProducts } = data as {
+    creator: any;
+    metrics: any[];
+    products: any[];
+    videos: any[];
+    shops: any[];
+    threads: ChatThreadView[];
+    videoProducts: Record<string, VideoProductInfo>;
+  };
 
   const pick = (scope: string, source: string) => metrics.find((m) => m.category_scope === scope && m.source === source);
   const all = pick("all", "web:creator/detail/total");
@@ -61,11 +68,12 @@ export default async function KocDetail({
   const cosmeticsShare = all?.revenue && cosmetics?.revenue ? Math.min(1, cosmetics.revenue / all.revenue) : null;
   const share = (part?: number | null) => (all?.revenue ? pct((part ?? 0) / all.revenue, 0) : "–");
   const contacts = contactItems(c.contact);
-  const shownVideos = videos.slice(0, showAll.videos ? undefined : 10);
-  const shownProducts = products.slice(0, showAll.products ? undefined : 10);
+  // Tỉ trọng mỗi shop trên tổng doanh thu các shop (code tính, cùng khoảng ngày)
+  const shopTotal = shops.reduce((a, s) => a + (s.revenue ?? 0), 0);
 
   return (
-    <div className="mx-auto w-full max-w-[1440px] space-y-4 px-4 py-5 sm:px-6 lg:px-8 lg:py-6 xl:px-10">
+    // pb-24: chừa chỗ cho thanh hỏi Tola nổi ở đáy, không thì che mất nội dung cuối trang
+    <div className="mx-auto w-full max-w-[1440px] space-y-4 px-4 pb-24 pt-5 sm:px-6 lg:px-8 lg:pb-24 lg:pt-6 xl:px-10">
       <div className="text-xs text-ink-muted">
         <Link href="/kocs" className="hover:text-brand">
           Nhà sáng tạo
@@ -159,107 +167,160 @@ export default async function KocDetail({
             )}
           </SectionCard>
 
-          {/* ── Videos ── */}
+          {/* ── Cửa hàng: shop KOC hợp tác bán hàng (Kalodata searchCooperativeShops) ── */}
           <SectionCard
-            id="videos"
-            title="Video & Quảng cáo"
-            icon={Clapperboard}
-            note={`${videos.length} video`}
+            id="shops"
+            title="Cửa hàng"
+            icon={Store}
+            note={shops.length ? `${shops.length} cửa hàng · ${shops[0].date_range.replace("~", " → ")}` : undefined}
             bodyClass="p-0"
           >
-            {videos.length ? (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[560px]">
-                <thead className="bg-slate-50/80 text-left text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
-                  <tr>
-                    <th className="w-12 px-4 py-2.5" />
-                    <th className="py-2.5">Video</th>
-                    <th className="py-2.5 text-right">Doanh thu</th>
-                    <th className="py-2.5 text-right">Lượt xem</th>
-                    <th className="py-2.5 text-right">Đơn</th>
-                    <th className="py-2.5 text-right">GPM</th>
-                    <th className="py-2.5 text-right">Thời lượng</th>
-                    <th className="px-4 py-2.5 text-right">SP gắn</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-line">
-                  {shownVideos.map((v, i) => (
-                    <tr key={v._id} className="transition hover:bg-brand-soft/50">
-                      <td className="num px-4 py-3 text-center text-ink-muted">{i + 1}</td>
-                      <td className="py-3 pr-4">
-                        <div className="flex items-start gap-3">
-                          <VideoThumb id={v._id} title={v.title || "Video TikTok"} tiktokUrl={tiktokVideo(c.handle, v._id)} />
-                          <div className="min-w-0">
-                            <a href={tiktokVideo(c.handle, v._id)} target="_blank" rel="noreferrer" className="line-clamp-2 max-w-lg hover:text-brand">
-                              {v.title || "(không có mô tả)"}
-                            </a>
-                            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-ink-muted">
-                              <span>{v.publish_date}</span>
-                              {v.is_ad && <Pill tone="blue">Quảng cáo</Pill>}
-                              {v.is_ai_video && <Pill tone="red">AI video</Pill>}
-                            </div>
+            {shops.length ? (
+              <PagedTable
+                minWidth={640}
+                head={
+                  <thead className="bg-slate-50/80 text-left text-[12px] font-medium text-ink-muted">
+                    <tr>
+                      <th className="w-12 px-4 py-2.5" />
+                      <th className="py-2.5">Thông tin cửa hàng</th>
+                      <th className="py-2.5">Doanh thu</th>
+                      <th className="py-2.5">Số lượng sản phẩm</th>
+                      <th className="px-4 py-2.5">Lượt bán</th>
+                    </tr>
+                  </thead>
+                }
+                rows={shops.map((s, i) => (
+                  <tr key={s.seller_id} className="transition hover:bg-brand-soft/50">
+                    <td className="num px-4 py-3.5 text-ink-muted">{i + 1}</td>
+                    <td className="py-3.5 pr-4">
+                      <div className="flex items-center gap-3">
+                        <ShopLogo sellerId={s.seller_id} name={s.shop_name || s.seller_id} />
+                        <div className="min-w-0">
+                          <div className="line-clamp-1 font-semibold">{s.shop_name || `Người bán ${s.seller_id}`}</div>
+                          <div className="mt-0.5 text-[11px] uppercase tracking-wide text-ink-muted">
+                            {s.seller_type === "BRAND" ? "Thương hiệu" : s.seller_type === "RETAILER" ? "Nhà bán lẻ" : "—"}
                           </div>
                         </div>
-                      </td>
-                      <td className="num py-3 text-right font-semibold">{vnd(v.revenue)}</td>
-                      <td className="num py-3 text-right">{compact(v.views)}</td>
-                      <td className="num py-3 text-right">{compact(v.sales)}</td>
-                      <td className="num py-3 text-right">{vnd(v.gpm)}</td>
-                      <td className="num py-3 text-right">{v.duration_sec ? `${Math.round(v.duration_sec)}s` : "–"}</td>
-                      <td className="num px-4 py-3 text-right">{v.product_ids?.length ?? "–"}</td>
+                      </div>
+                    </td>
+                    <td className="num py-3.5 font-semibold text-brand">
+                      {vnd(s.revenue)}
+                      {shopTotal > 0 && <span className="ml-1.5 text-[11px] font-normal text-ink-muted">{pct((s.revenue ?? 0) / shopTotal, 1)}</span>}
+                    </td>
+                    <td className="num py-3.5">{compact(s.product_count)}</td>
+                    <td className="num px-4 py-3.5">{compact(s.sales)}</td>
+                  </tr>
+                ))}
+              />
+            ) : (
+              <Empty>Chưa thu thập dữ liệu cửa hàng cho KOC này.</Empty>
+            )}
+          </SectionCard>
+
+          {/* ── Videos ── */}
+          <SectionCard id="videos" title="Video & Quảng cáo" icon={Clapperboard} note={`${videos.length} video`} bodyClass="p-0">
+            {videos.length ? (
+              <PagedTable
+                minWidth={860}
+                head={
+                  <thead className="bg-slate-50/80 text-left text-[12px] font-medium text-ink-muted">
+                    <tr>
+                      <th className="w-12 px-4 py-2.5" />
+                      <th className="py-2.5">Video</th>
+                      <th className="py-2.5">Sản phẩm</th>
+                      <th className="py-2.5 text-right">Doanh thu</th>
+                      <th className="py-2.5 text-right">Lượt xem</th>
+                      <th className="py-2.5 text-right">Đơn</th>
+                      <th className="py-2.5 text-right" title="Tỉ lệ lượt xem đến từ quảng cáo">Lượt xem QC</th>
+                      <th className="py-2.5 text-right" title="Tỉ lệ doanh thu đến từ quảng cáo">Doanh thu QC</th>
+                      <th className="px-4 py-2.5 text-right">GPM</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-              </div>
+                  </thead>
+                }
+                rows={videos.map((v, i) => (
+                  <tr key={v._id} className="transition hover:bg-brand-soft/50">
+                    <td className="num px-4 py-3 text-ink-muted">{i + 1}</td>
+                    <td className="py-3 pr-4">
+                      <div className="flex items-start gap-3">
+                        <VideoThumb id={v._id} title={v.title || "Video TikTok"} tiktokUrl={tiktokVideo(c.handle, v._id)} durationSec={v.duration_sec} />
+                        <div className="min-w-0 max-w-[260px]">
+                          <a href={tiktokVideo(c.handle, v._id)} target="_blank" rel="noreferrer" className="line-clamp-2 font-medium hover:text-brand">
+                            {v.title || "(không có mô tả)"}
+                          </a>
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-ink-muted">
+                            {v.is_ad && <Pill tone="blue">AD</Pill>}
+                            {v.is_ai_video && <Pill tone="red">AI video</Pill>}
+                            <span>{v.publish_date}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-3">
+                      {v.product_ids?.[0] ? (
+                        <ProductHover id={v.product_ids[0]} info={videoProducts[v.product_ids[0]]} more={v.product_ids.length - 1} />
+                      ) : (
+                        <span className="text-ink-muted">–</span>
+                      )}
+                    </td>
+                    <td className="num py-3 text-right font-semibold text-brand">{vnd(v.revenue)}</td>
+                    <td className="num py-3 text-right">{compact(v.views)}</td>
+                    <td className="num py-3 text-right">{compact(v.sales)}</td>
+                    <td className="num py-3 text-right">{v.is_ad && v.ad_view_ratio != null ? pct(v.ad_view_ratio, 2) : "–"}</td>
+                    <td className="num py-3 text-right">{v.is_ad && v.ad_revenue_ratio != null ? pct(v.ad_revenue_ratio, 2) : "–"}</td>
+                    <td className="num px-4 py-3 text-right">{vnd(v.gpm)}</td>
+                  </tr>
+                ))}
+              />
             ) : (
               <Empty>Không có video trong kỳ (KOC có thể chủ yếu bán qua livestream).</Empty>
             )}
-            {videos.length > 10 && <MoreLink id="videos" open={showAll.videos} total={videos.length} />}
           </SectionCard>
 
           {/* ── Products ── */}
-          <SectionCard
-            id="products"
-            title="Sản phẩm đã bán"
-            icon={Package}
-            note={`${products.length} sản phẩm`}
-            bodyClass="p-0"
-          >
+          <SectionCard id="products" title="Sản phẩm đã bán" icon={Package} note={`${products.length} sản phẩm · top theo doanh thu`} bodyClass="p-0">
             {products.length ? (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[560px]">
-                <thead className="bg-slate-50/80 text-left text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
-                  <tr>
-                    <th className="w-12 px-4 py-2.5" />
-                    <th className="py-2.5">Sản phẩm</th>
-                    <th className="py-2.5 text-right">Doanh thu</th>
-                    <th className="py-2.5 text-right">Lượt bán</th>
-                    <th className="px-4 py-2.5 text-right">Đơn giá TB</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-line">
-                  {shownProducts.map((p, i) => (
-                    <tr key={p.product_id} className="transition hover:bg-brand-soft/50">
-                      <td className="num px-4 py-3 text-center text-ink-muted">{i + 1}</td>
-                      <td className="max-w-2xl py-3 pr-4">
-                        <div className="flex items-center gap-3">
-                          <ProductThumb id={p.product_id} name={p.p?.name ?? ""} />
-                          <span className="line-clamp-2">{p.p?.name ?? p.product_id}</span>
-                        </div>
-                      </td>
-                      <td className="num py-3 text-right font-semibold">{vnd(p.revenue)}</td>
-                      <td className="num py-3 text-right">{compact(p.sales_volume)}</td>
-                      <td className="num px-4 py-3 text-right">{vnd(p.unit_price)}</td>
+              <PagedTable
+                minWidth={760}
+                head={
+                  <thead className="bg-slate-50/80 text-left text-[12px] font-medium text-ink-muted">
+                    <tr>
+                      <th className="w-12 px-4 py-2.5" />
+                      <th className="py-2.5">Sản phẩm</th>
+                      <th className="py-2.5">Cửa hàng</th>
+                      <th className="py-2.5 text-right">Doanh thu</th>
+                      <th className="py-2.5 text-right">Lượt bán</th>
+                      <th className="px-4 py-2.5 text-right">Đơn giá TB</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-              </div>
+                  </thead>
+                }
+                rows={products.map((p, i) => (
+                  <tr key={p.product_id} className="transition hover:bg-brand-soft/50">
+                    <td className="num px-4 py-3 text-ink-muted">{i + 1}</td>
+                    <td className="max-w-md py-3 pr-4">
+                      <div className="flex items-center gap-3">
+                        <ProductThumb id={p.product_id} name={p.p?.name ?? ""} />
+                        <span className="line-clamp-2">{p.p?.name ?? p.product_id}</span>
+                      </div>
+                    </td>
+                    <td className="py-3 pr-4">
+                      {p.p?.seller_id ? (
+                        <div className="flex items-center gap-2">
+                          <ShopLogo sellerId={p.p.seller_id} name={p.p.seller_name || p.p.seller_id} />
+                          <span className="line-clamp-1 max-w-[180px] text-[13px]">{p.p.seller_name || <span className="text-ink-muted">Chưa rõ tên</span>}</span>
+                        </div>
+                      ) : (
+                        <span className="text-ink-muted">–</span>
+                      )}
+                    </td>
+                    <td className="num py-3 text-right font-semibold text-brand">{vnd(p.revenue)}</td>
+                    <td className="num py-3 text-right">{compact(p.sales_volume)}</td>
+                    <td className="num px-4 py-3 text-right">{vnd(p.unit_price)}</td>
+                  </tr>
+                ))}
+              />
             ) : (
               <Empty>Chưa có dữ liệu sản phẩm.</Empty>
             )}
-            {products.length > 10 && <MoreLink id="products" open={showAll.products} total={products.length} />}
           </SectionCard>
 
           {/* ── Audience ── */}
@@ -344,16 +405,6 @@ function AudienceTile({ label, value, tone }: { label: string; value: string; to
     <div className={`rounded-xl bg-gradient-to-br p-5 ring-1 ring-line ${tone}`}>
       <div className="text-xs text-ink-muted">{label}</div>
       <div className="mt-1 text-xl font-semibold">{value}</div>
-    </div>
-  );
-}
-
-function MoreLink({ id, open, total }: { id: string; open: boolean; total: number }) {
-  return (
-    <div className="border-t border-line py-2.5 text-center">
-      <Link href={open ? `?#${id}` : `?all=${id}#${id}`} scroll={false} className="text-xs font-semibold text-brand hover:underline">
-        {open ? "Thu gọn" : `Xem tất cả ${total}`}
-      </Link>
     </div>
   );
 }

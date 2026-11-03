@@ -5,7 +5,7 @@
  * unnamed seller of ours, or at --max-pages. Uses the same pacing/daily cap as the KOC crawl.
  *   npm run crawl:shops [-- --max-pages 80]
  */
-import { KalodataWebClient, KalodataWebError } from "../src/lib/kalodata/web-client";
+import { exitCodeFor, KalodataWebClient } from "../src/lib/kalodata/web-client";
 import { closeDb, getDb } from "../src/lib/db/mongo";
 import { C } from "../src/lib/db/collections";
 
@@ -25,7 +25,7 @@ const unnamed = async () => {
   const named = new Set((await products.distinct("seller_id", { seller_name: { $nin: [null, ""] } })).map(String));
   return new Set((await products.distinct("seller_id")).map(String).filter((s) => !named.has(s)));
 };
-let todo = await unnamed();
+const todo = await unnamed();
 console.log(`▶ shops: ${todo.size} sellers without a name`);
 if (!todo.size) process.exit(0);
 
@@ -64,7 +64,7 @@ try {
   console.error(`✖ shops stopped: ${err instanceof Error ? err.message : err}`);
   await web.close();
   await closeDb();
-  process.exit((err as KalodataWebError).kind === "locked" ? 3 : 1);
+  process.exit(exitCodeFor(err)); // 3 = khóa tài khoản, 4 = chạm giới hạn → daemon dừng hẳn
 }
 await web.close();
 await closeDb();

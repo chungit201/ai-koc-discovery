@@ -1,5 +1,5 @@
 /**
- * MCP server "koc" (docs/10-koc-agent.md, P3): đưa 7 công cụ đọc DB trong `koc-data/tools.ts` cho
+ * MCP server "koc" (docs/02-tola-ai.md): đưa các công cụ đọc DB trong `koc-data/tools.ts` cho
  * Claude CLI ở chế độ agent. JSON-RPC 2.0 qua stdio, mỗi thông điệp một dòng — tự viết, không thêm
  * dependency.
  *
@@ -71,7 +71,13 @@ function toText(r: ToolResult): string {
 }
 
 /** Công cụ không đọc dữ liệu của riêng một KOC → không chèn `creator_id`. */
-const GLOBAL_TOOLS = new Set(["search_creators", "list_campaigns"]);
+const GLOBAL_TOOLS = new Set(["search_creators", "list_campaigns", "start_campaign_analysis"]);
+/**
+ * Mở phân tích sâu — ẩn khi đã có chiến dịch (sửa bằng các công cụ chiến dịch) hoặc khi hỏi từ trang
+ * hồ sơ một KOC (`KOC_NO_DEEP=1`: câu hỏi là về người đó, không phải brief tuyển người mới).
+ */
+const DEEP_TOOLS = new Set(["start_campaign_analysis"]);
+const NO_DEEP = Boolean(CAMPAIGN) || process.env.KOC_NO_DEEP === "1";
 /**
  * Chỉ có nghĩa khi đang nói về một chiến dịch cụ thể — không có `KOC_CAMPAIGN` thì agent không
  * thấy chúng trong `tools/list`, nên không thể sửa một chiến dịch mà nó không đang xem.
@@ -101,7 +107,7 @@ async function handle(m: Msg): Promise<void> {
       return reply(id, {});
     case "tools/list":
       return reply(id, {
-        tools: KOC_TOOLS.filter((t) => !CAMPAIGN_TOOLS.has(t.name) || CAMPAIGN).map((t) => ({ name: t.name, description: t.description, inputSchema: withCreator(t.name, t.input_schema) })),
+        tools: KOC_TOOLS.filter((t) => (!CAMPAIGN_TOOLS.has(t.name) || CAMPAIGN) && !(DEEP_TOOLS.has(t.name) && NO_DEEP)).map((t) => ({ name: t.name, description: t.description, inputSchema: withCreator(t.name, t.input_schema) })),
       });
     case "tools/call": {
       const name = String(m.params?.name ?? "");

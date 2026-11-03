@@ -68,14 +68,27 @@ export function numbersIn(md: string): NumberToken[] {
  * ("₫24 tr" chứ không phải 24000000), và vì summary chứa những số dẫn xuất (tỉ lệ %, "3/38 video")
  * mà `numbers` không liệt kê hết.
  */
-export function allowedNumbers(evidence: { claim: string; numbers?: Record<string, number> }[]): number[] {
+export function allowedNumbers(evidence: Evidence[]): number[] {
   const pool: number[] = [];
   for (const e of evidence) {
     for (const v of Object.values(e.numbers ?? {})) if (Number.isFinite(v)) pool.push(v);
     for (const t of numbersIn(e.claim)) pool.push(t.value);
+    // Hàng của bảng kết quả cũng là nguồn: model chép số từ bảng (tương tác 2,82% của từng KOC đối chuẩn)
+    // mà dòng tóm tắt không liệt kê. Thiếu cái này thì số đúng 100% vẫn bị gạch chân "chưa kiểm chứng".
+    for (const row of e.rows ?? []) for (const v of Object.values(row ?? {})) if (typeof v === "number" && Number.isFinite(v)) pool.push(v);
   }
   return pool;
 }
+
+/** Một nguồn số của phiên: kết quả công cụ (tóm tắt + số thô + hàng bảng), hoặc chữ đọc được từ web. */
+export interface Evidence {
+  claim: string;
+  numbers?: Record<string, number>;
+  rows?: Record<string, unknown>[];
+}
+
+/** Năm (2024, "2025.") không phải số liệu cần nguồn — model nhắc năm để nói rõ kỳ dữ liệu / ngày tin. */
+const isYear = (t: NumberToken) => /^\d{4}[.,]?$/.test(t.text) && t.value >= 1900 && t.value <= 2100;
 
 /** Sai số cho phép: số đã làm tròn khi hiển thị ("₫19,3 tr" ↔ 19.300.000) nên không thể so bằng. */
 const TOLERANCE = 0.02;
@@ -94,9 +107,9 @@ export interface VerifyResult {
 }
 
 /** Quét markdown, trả về những con số không khớp kho số của phiên. */
-export function verifyAnswer(markdown: string, evidence: { claim: string; numbers?: Record<string, number> }[]): VerifyResult {
+export function verifyAnswer(markdown: string, evidence: Evidence[]): VerifyResult {
   const pool = allowedNumbers(evidence);
-  const tokens = numbersIn(stripCode(markdown));
+  const tokens = numbersIn(stripCode(markdown)).filter((t) => !isYear(t));
   return { unverified: tokens.filter((t) => !isKnown(t.value, pool) && !(t.alt !== undefined && isKnown(t.alt, pool))), checked: tokens.length };
 }
 

@@ -30,8 +30,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <Suspense fallback={<div className="hidden w-64 shrink-0 border-r border-line bg-white lg:block" />}>
           <Sidebar />
         </Suspense>
-        {/* `pb-20` chừa chỗ cho thanh tab dưới (mobile) để nội dung cuối trang không bị che */}
-        <div className="flex min-w-0 flex-1 flex-col pb-20 lg:pb-0">
+        {/* Khoảng chừa cho thanh tab dưới (mobile) nằm trong chính `BottomNav` — trang nào ẩn thanh thì không thừa khoảng trống */}
+        <div className="flex min-w-0 flex-1 flex-col">
           {/* Dưới lg không có sidebar → thanh trên (logo) + thanh tab dưới thay thế */}
           <Suspense fallback={<div className="h-[53px] border-b border-line bg-white lg:hidden" />}>
             <MobileNav />

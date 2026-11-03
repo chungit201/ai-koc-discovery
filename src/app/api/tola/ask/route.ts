@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { getDb } from "@/lib/db/mongo";
 import { C } from "@/lib/db/collections";
 import { askTola } from "@/lib/chat-creator-agent";
-import { mentionContext, resolveMentions } from "@/lib/mentions";
-import { classifyAsk, runDeepSearch } from "@/lib/tola-deep";
+import { mentionById, mentionContext, resolveMentions } from "@/lib/mentions";
+import { runDeepSearch } from "@/lib/tola-deep";
 import type { ChatMessage } from "@/lib/chat";
 import type { AskEvent, StepKind, StepPayload } from "@/lib/chat-events";
 
@@ -15,7 +15,9 @@ import type { AskEvent, StepKind, StepPayload } from "@/lib/chat-events";
  * phụ thuộc trang nào đang mở. Cả lượt hỏi–đáp lưu vào `tola_chats` để mở lại vẫn còn.
  */
 export async function POST(req: Request) {
-  const body = (await req.json().catch(() => ({}))) as { text?: string; threadId?: string; campaignId?: string };
+  const body = (await req.json().catch(() => ({}))) as { text?: string; threadId?: string; campaignId?: string; creatorId?: string };
+  /** Hỏi từ popup ở trang hồ sơ KOC: KOC đang xem coi như đã được tag dù câu hỏi không có `@handle`. */
+  const creatorId = String(body.creatorId ?? "").trim() || undefined;
   const text = String(body.text ?? "").trim().slice(0, 1000);
   const threadId = String(body.threadId ?? "").trim() || randomUUID();
   const campaignId = String(body.campaignId ?? "").trim() || undefined;
@@ -46,62 +48,86 @@ export async function POST(req: Request) {
         const prevCampaign = (thread?.campaign_id as string) || undefined;
 
         const mentions = await resolveMentions(text);
+        let subject = creatorId ? (mentions.found.find((m) => m.creator_id === creatorId) ?? null) : null;
+        if (creatorId && !subject) {
+          subject = await mentionById(creatorId);
+          if (subject) mentions.found.unshift(subject);
+        }
         send({ type: "plan", steps: [], agent: true });
 
         /**
-         * Brief tuyển KOC → chạy phân tích sâu S2→S5 NGAY TRONG LƯỢT NÀY, phát tiến độ ra chat, rồi
-         * mới để agent viết nhận định từ `campaign_context`. Trước đây Tola chỉ tạo chiến dịch rồi
-         * đẩy người dùng sang trang khác — mất hẳn mạch hội thoại.
-         *
-         * Đếm bước phải cộng dồn: agent tự đánh số từ 0, nhưng ở đây các bước pipeline đã chiếm chỗ.
+         * Phát một luồng sự kiện ra chat. Mỗi nguồn (agent, pipeline) tự đánh số bước từ 0, nên dời
+         * chỉ số theo số bước đã phát trước nó. Trả về brief nếu agent giao lại để phân tích sâu.
+         * `done` của từng chặng không gửi xuống: client coi `done` là hết lượt.
          */
-        let deepCampaign: string | null = null;
-        if (!campaignId && (await classifyAsk(text)) === "deep") {
-          const deep = runDeepSearch(text);
+        let cost = 0;
+        const pipe = async (gen: AsyncGenerator<AskEvent, unknown>): Promise<{ brief: string | null; ret: unknown }> => {
+          const offset = steps.length;
+          let brief: string | null = null;
           for (;;) {
-            const n = await deep.next();
-            if (n.done) {
-              deepCampaign = n.value;
-              break;
+            const r = await gen.next();
+            if (r.done) return { brief, ret: r.value };
+            const e = r.value;
+            if (e.type === "deep_request") {
+              brief = e.brief;
+              continue;
             }
-            const e = n.value;
-            send(e);
+            const shifted = e.type === "step_done" || e.type === "step_start" ? { ...e, index: e.index + offset } : e;
+            if (e.type === "done") cost += e.cost_usd ?? 0;
+            else send(shifted);
             if (e.type === "step_add") steps.push({ title: e.title, detail: "", kind: e.kind });
             // Giữ cả `payload`: bước xem video mang theo dẫn chứng từng video, mất nó là thẻ trống
-            else if (e.type === "step_done" && steps[e.index]) Object.assign(steps[e.index], { detail: e.detail, ...(e.payload ? { payload: e.payload } : {}) });
+            else if (e.type === "step_done" && steps[e.index + offset]) Object.assign(steps[e.index + offset], { detail: e.detail, ...(e.payload ? { payload: e.payload } : {}) });
+            else if (e.type === "conclusion") {
+              reply = e.text;
+              markdown = e.markdown ?? "";
+              unverified = e.unverified ?? [];
+              followUps = e.follow_ups ?? [];
+            }
           }
-        }
-        const offset = steps.length;
-        activeCampaignId = campaignId ?? deepCampaign ?? prevCampaign;
+        };
 
-        const ctx = [
-          mentionContext(mentions),
-          deepCampaign
-            ? `Yêu cầu này VỪA được phân tích sâu xong (S2→S5 đã chạy, chiến dịch ${deepCampaign}). Gọi campaign_context trước rồi BÁO CÁO KẾT QUẢ THẬT — ai được chọn, điểm, ngân sách đã chia, bằng chứng. Đừng nói "đang chạy".`
-            : "",
-        ]
-          .filter(Boolean)
-          .join("\n\n");
+        const subjectNote = subject
+          ? `Người bán đang hỏi từ trang hồ sơ của KOC ${subject.name} (@${subject.handle}, creator_id ${subject.creator_id}). Câu hỏi không nói rõ là ai ("KOC này", "bạn này", hoặc không nhắc tên) thì hiểu là hỏi RIÊNG về KOC này — trả lời về đúng người này, không tìm/so sánh KOC khác trừ khi được yêu cầu.`
+          : "";
+        const ask = (campaign: string | undefined, extra: string, allowDeep: boolean) =>
+          askTola({
+            text,
+            history,
+            mentioned: mentions.found,
+            context: [subjectNote, mentionContext(mentions), extra].filter(Boolean).join("\n\n"),
+            campaignId: campaign,
+            // Có chiến dịch → câu trả lời nằm trong DB; không cho agent lan man ra web
+            allowWeb: !campaign,
+            allowDeep,
+          });
 
-        for await (const e of askTola({
-          text,
-          history,
-          mentioned: mentions.found,
-          context: ctx,
-          campaignId: activeCampaignId,
-        })) {
-          // Dời chỉ số bước của agent xuống sau các bước pipeline đã phát ở trên
-          const shifted = e.type === "step_done" || e.type === "step_start" ? { ...e, index: e.index + offset } : e;
-          send(shifted);
-          if (e.type === "step_add") steps.push({ title: e.title, detail: "", kind: e.kind });
-          else if (e.type === "step_done" && steps[e.index + offset]) Object.assign(steps[e.index + offset], { detail: e.detail, ...(e.payload ? { payload: e.payload } : {}) });
-          else if (e.type === "conclusion") {
-            reply = e.text;
-            markdown = e.markdown ?? "";
-            unverified = e.unverified ?? [];
-            followUps = e.follow_ups ?? [];
-          }
+        /**
+         * Chặng 1 — agent đọc câu hỏi và TỰ quyết: tra cứu thì trả lời luôn; brief tuyển KOC thì gọi
+         * `start_campaign_analysis` và dừng. Trước đây một bước phân loại riêng (regex + Haiku) quyết
+         * thay agent và bắt nhầm câu xếp hạng ("tìm 20 nhà sáng tạo doanh thu cao nhất") thành brief.
+         * Không mở phân tích sâu khi đã có chiến dịch hoặc đang hỏi về một KOC cụ thể từ trang hồ sơ.
+         */
+        activeCampaignId = campaignId ?? prevCampaign;
+        const first = await pipe(ask(activeCampaignId, "", !activeCampaignId && !subject));
+
+        if (first.brief) {
+          // Chặng 2 — phân tích sâu S2→S5 ngay trong lượt, phát tiến độ từng bước ra chat
+          const deep = await pipe(runDeepSearch(first.brief));
+          const deepCampaign = (deep.ret as string | null) ?? null;
+          if (deepCampaign) activeCampaignId = deepCampaign;
+          // Chặng 3 — agent đọc kết quả thật và báo cáo (không mở phân tích lần nữa)
+          await pipe(
+            ask(
+              activeCampaignId,
+              deepCampaign
+                ? `Yêu cầu này VỪA được phân tích sâu xong (S2→S5 đã chạy, chiến dịch ${deepCampaign}). Gọi campaign_context trước rồi BÁO CÁO KẾT QUẢ THẬT — ai được chọn, điểm, ngân sách đã chia, bằng chứng. Đừng nói "đang chạy".`
+                : "Phân tích sâu không chạy được (không hiểu được yêu cầu). Nói rõ điều đó và hỏi người bán thêm thông tin: sản phẩm, số KOC, ngân sách.",
+              false,
+            ),
+          );
         }
+        send({ type: "done", cost_usd: cost });
       } catch (err) {
         console.error("[tola] luồng hỏi đáp lỗi", err);
         send({ type: "error", message: "Mình gặp lỗi khi tra dữ liệu — bạn thử lại giúp mình nhé." });

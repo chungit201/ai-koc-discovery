@@ -10,7 +10,7 @@ import { C, type ApiCall } from "../db/collections";
 
 /**
  * Headless Claude via the local Claude CLI (`claude -p`), the LLM choice for this project
- * (docs/01-plan.md). No tools, no session, our own short system prompt. Every call is logged
+ * (docs/02-tola-ai.md). No tools, no session, our own short system prompt. Every call is logged
  * to `api_calls` with tokens + cost; identical prompts are served from `llm_cache`.
  */
 export interface ClaudeResult {
@@ -195,7 +195,7 @@ function spawnCli(args: string[], input: string): Promise<string> {
   });
 }
 
-// ── Chế độ agent (docs/10-koc-agent.md, P4) ──────────────────────────────────
+// ── Chế độ agent (docs/02-tola-ai.md) ──────────────────────────────────
 
 /** Một MCP server stdio cho agent — chạy bằng chính node đang chạy app, cwd = gốc repo. */
 export interface AgentMcp {

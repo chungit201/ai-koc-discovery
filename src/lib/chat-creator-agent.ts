@@ -10,15 +10,15 @@ import type { AskEvent, StepKind, StepPayload, ToolTable } from "./chat-events";
 import type { ChatMessage } from "./chat";
 
 /**
- * Hỏi đáp về một KOC bằng **agent có công cụ** (docs/10-koc-agent.md, P5): Claude CLI tự lập kế
+ * Hỏi đáp về một KOC bằng **agent có công cụ** (docs/02-tola-ai.md): Claude CLI tự lập kế
  * hoạch, gọi công cụ đọc DB qua MCP `koc` (`scripts/koc-mcp.ts`), thấy thiếu thì gọi tiếp, rồi viết
  * câu trả lời dạng khối JSON. Mỗi lần gọi công cụ hiện thành một thẻ trên giao diện.
  *
- * Chống bịa giữ nguyên nguyên tắc cũ (docs/04-data-model.md §3.1): mỗi kết quả công cụ là một bản
+ * Chống bịa giữ nguyên nguyên tắc cũ (docs/02-tola-ai.md §5): mỗi kết quả công cụ là một bản
  * ghi `evidence` của phiên; câu có số phải trích evidence của phiên và mọi số phải nằm trong claim
  * được trích (`validateReasons`), số tự tính phải đi qua `calc`. Bảng do code chép hàng từ evidence.
  */
-export const AGENT_PROMPT_VERSION = "koc-agent-v4";
+export const AGENT_PROMPT_VERSION = "koc-agent-v5"; // v5: agent tự quyết mở phân tích sâu (start_campaign_analysis), bỏ bước phân loại riêng
 const HISTORY_TURNS = 8;
 
 /**
@@ -57,9 +57,17 @@ campaign_context có phần "AI ĐÃ XEM ... video" của từng KOC: tiêu đ�
 - Viết "trong khung hình thấy…", KHÔNG khẳng định về lời nói hay giọng điệu: AI chỉ nhìn 4 khung hình tĩnh, không nghe được tiếng.
 - KOC nào ngữ cảnh ghi "CHƯA xem video" thì nói thẳng là chưa kiểm chứng được phần hình ảnh, và mời người bán yêu cầu xem (deepen_koc). Đừng đoán nội dung video.
 
+HIỂU CÂU HỎI TRƯỚC — TRA CỨU hay TUYỂN KOC?
+Đọc kỹ người bán muốn gì rồi mới chọn công cụ:
+- TUYỂN KOC cho một chiến dịch (họ sắp chi tiền hợp tác để quảng bá sản phẩm/ngành hàng của họ; thường kèm số KOC, ngân sách, khán giả mục tiêu, MCN, yêu cầu review) → gọi start_campaign_analysis với brief chép nguyên văn, rồi DỪNG. Ví dụ: "tìm 5 KOC bán kem chống nắng, nữ 18-30, ngân sách 30 triệu", "cần 10 KOC trang điểm chưa ký MCN để review son mới", "book giúp 6 bạn skincare cho chiến dịch tháng 12".
+- TRA CỨU / XẾP HẠNG / SO SÁNH (họ muốn biết một danh sách hay con số, chưa nói tới hợp tác) → search_creators và các công cụ đọc dữ liệu, trả lời luôn. Ví dụ: "tìm 20 nhà sáng tạo doanh thu cao nhất tháng 10", "top 10 KOC nhiều follower nhất", "ai đang tăng trưởng mạnh", "so @a với @b". Có chữ "tìm" + số lượng KHÔNG có nghĩa là tuyển KOC.
+- Mơ hồ ("tìm 5 KOC tốt") → trả lời như tra cứu, rồi ở follow_ups gợi ý: muốn tuyển cho chiến dịch thì cho biết sản phẩm và ngân sách.
+Công cụ start_campaign_analysis không có trong danh sách (đang ở trang một KOC hoặc đã có chiến dịch) thì cứ trả lời bằng các công cụ còn lại.
+
 BẮT ĐẦU TỪ ĐÂU
 - Câu hỏi có nhắc tên/handle KOC → phần ngữ cảnh bên dưới đã ghi sẵn creator_id, dùng thẳng.
 - Hỏi TRA CỨU, xếp hạng, so sánh → search_creators.
+- Hỏi KOC bán cho shop / cửa hàng / thương hiệu nào, hợp tác với ai, có bán cho X không → list_shops (truyền "shop" để lọc theo tên).
 - Hỏi về một chiến dịch mà chưa có id → list_campaigns trước, rồi campaign_context.
 - Đang trong một chiến dịch cụ thể → campaign_context ĐẦU TIÊN.
 - KOC nào "CHƯA có dữ liệu chi tiết" thì các công cụ đọc sâu sẽ trống: nói thẳng, đừng hứa phân tích.
@@ -75,6 +83,10 @@ SO SÁNH NGOÀI DANH SÁCH
 Người bán nhắc một KOC không nằm trong chiến dịch đang xem thì cứ search_creators tìm rồi đọc dữ liệu của họ — không còn bị giới hạn trong shortlist nữa.`;
 
 const RULES = `
+CÂU HỎI NGOÀI PHẠM VI (không liên quan KOC, bán hàng, thương hiệu, ngành mỹ phẩm/TikTok Shop — vd thời tiết, giá vàng, tỉ giá, bóng đá, chính trị, nhờ viết code)
+KHÔNG gọi công cụ nào, KHÔNG tìm web. Trả lời 1-2 câu: nói thẳng đây là ngoài phạm vi của Tola, rồi gợi ý 2-3 việc bạn làm được (tìm KOC, xem doanh thu/cửa hàng của một KOC, lên danh sách cho chiến dịch). Không đưa con số nào.
+Câu về ngành mỹ phẩm / TikTok Shop / thương hiệu mà Kalodata không có (quy mô thị trường, xu hướng ngành) thì VẪN trong phạm vi: được tìm web theo mục dưới.
+
 CÂU HỎI NGOÀI DỮ LIỆU (vd "có gia đình chưa", "là ai", "có phải chủ thương hiệu không")
 a. Gọi get_overview (DUY NHẤT công cụ mcp__koc__* cho loại câu này) để xác nhận dữ liệu Kalodata KHÔNG có thông tin này và lấy tên/handle/thương hiệu làm từ khoá. KHÔNG gọi list_products, list_videos, get_peers… — người hỏi không hỏi về bán hàng.
 b. Tìm web kỹ như một người điều tra, ưu tiên nguồn gốc: kênh chính chủ của KOC (TikTok, Facebook, Instagram — KOC hay có NICK CHÍNH khác handle đang xem), báo chí Việt Nam.
@@ -103,6 +115,7 @@ CÁCH LÀM (câu hỏi về số liệu)
 3. Hỏi về danh mục / sản phẩm / bán hàng: BẮT BUỘC đủ bộ — get_overview, category_breakdown level 1 VÀ level 2, list_products, list_videos (sort=revenue), analyze_videos (xem các video bán hàng tốt nhất: KOC có thật sự demo đúng sản phẩm không), get_peers để đối chuẩn.
    Câu hỏi xoay quanh MỘT loại sản phẩm (kem chống nắng, phấn nền…) thì truyền tham số "product" vào list_products và vào search_creators. Bỏ trống sẽ ra top cả kênh — người bán hỏi kem chống nắng mà bảng toàn son với phấn mắt thì họ tưởng hệ thống lỗi.
    Hỏi doanh thu / ổn định: get_overview, get_daily, get_peers. Hỏi video: list_videos (views và revenue), analyze_videos, get_overview.
+   Hỏi CHẤT LƯỢNG NỘI DUNG / CÁCH REVIEW: BẮT BUỘC đủ bộ — get_overview (tỉ trọng live/video, doanh thu trên 1.000 lượt xem live và video), list_videos sort=revenue (đọc phần thống kê TOÀN BỘ video: bao nhiêu video không ra đơn, doanh thu video đến từ quảng cáo trả phí bao nhiêu), get_peers (lượt xem video 30 ngày so với nhóm), rồi analyze_videos 5 video (truyền video_ids: 3 video doanh thu cao nhất + 2 video nhiều view nhất nếu khác). Kết luận phải nói cả bức tranh toàn kênh (số liệu toàn bộ video, so nhóm) LẪN bằng chứng từng video (điều AI thấy trong khung hình).
 4. Muốn nói một con số KHÔNG có sẵn trong kết quả (tổng, tỉ trọng, gấp bao nhiêu lần, chênh lệch) → PHẢI gọi calc với số lấy từ "numbers", rồi chép kết quả calc. Tự cộng/nhân/ước lượng trong đầu là SAI và câu đó sẽ bị xoá.
 5. TỰ KIỂM TRA trước khi viết: mỗi kết luận phải có ít nhất 2 bằng chứng độc lập chống đỡ (vd số liệu bán hàng + điều AI thấy trong video, hoặc số của KOC + đối chuẩn). Bằng chứng mâu thuẫn nhau thì nói rõ mâu thuẫn, không chọn phe. Điều chưa đủ dữ liệu thì nói "chưa đủ dữ liệu".
    Nhận định từ analyze_videos là AI nhìn 4 khung hình, không nghe được tiếng — viết "trong khung hình thấy…", không khẳng định về lời nói.
@@ -112,6 +125,7 @@ QUY TẮC SỐ
 - Mọi con số trong bài đều bị hệ thống đối chiếu lại với kết quả công cụ của phiên. Số không có nguồn sẽ bị đánh dấu trước mặt người bán — đừng ước lượng, đừng tự tính nhẩm.
 - Trong phần kinh nghiệm, tránh nêu con số minh hoạ ("ví dụ ngân sách 50-100 triệu") — nói định tính ("khi ngân sách rộng hơn") để không có số nào trong bài thiếu nguồn.
 - Muốn nói một con số KHÔNG có sẵn (tổng, tỉ trọng, gấp mấy lần, chênh lệch) → gọi calc rồi chép kết quả.
+- Không bao giờ in số thô dạng thập phân dài ("0,4818656…"): chép đúng dạng đã định dạng mà công cụ/calc trả về ("48,2%").
 - Doanh thu so đối chuẩn của get_peers là doanh thu MỸ PHẨM (khác doanh thu cả kênh) — nói rõ khi so.
 - Khán giả luôn ghi "(ước tính)". Phần trăm "chưa phân loại" phải nêu là thiếu dữ liệu danh mục, không đoán nó thuộc ngành nào như sự thật.
 
@@ -162,6 +176,7 @@ const TITLES: Record<string, (input: Record<string, unknown>) => string> = {
       i.min_revenue ? ` doanh thu ≥ ${Math.round(Number(i.min_revenue) / 1e6).toLocaleString("vi-VN")} triệu` : ""
     }${i.mcn === "no" ? " chưa ký MCN" : i.mcn === "yes" ? " đã ký MCN" : ""}`.replace(/\s+/g, " "),
   list_campaigns: () => "Lấy danh sách chiến dịch",
+  list_shops: (i) => (i.shop ? `Tìm cửa hàng '${String(i.shop)}' KOC hợp tác` : "Lấy các cửa hàng KOC hợp tác bán"),
   campaign_context: () => "Đọc chiến dịch: tiêu chí, điểm, ngân sách",
   allocate_budget: (i) => `Tính phương án chia ngân sách${Number(i.total) ? ` ${Math.round(Number(i.total) / 1e6).toLocaleString("vi-VN")} triệu` : ""}`,
   exclude_koc: (i) => `Bỏ ${Array.isArray(i.creator_ids) ? i.creator_ids.length : 1} KOC & chọn người thay thế`,
@@ -185,7 +200,7 @@ function webLinks(text: string): { title: string; url: string }[] {
 }
 const KIND: Record<string, StepKind> = { get_peers: "peers", list_videos: "videos", analyze_videos: "videos", deepen_koc: "videos", exclude_koc: "conclusion", update_criteria: "conclusion" };
 /** Công cụ có hàng vẽ được thành bảng. */
-const TABLE_TOOLS = new Set(["list_products", "category_breakdown", "list_videos", "get_peers", "analyze_videos", "campaign_context", "allocate_budget", "exclude_koc", "update_criteria", "deepen_koc"]);
+const TABLE_TOOLS = new Set(["list_products", "list_shops", "category_breakdown", "list_videos", "get_peers", "analyze_videos", "campaign_context", "allocate_budget", "exclude_koc", "update_criteria", "deepen_koc"]);
 
 /** Dòng tóm tắt ngắn cho thẻ: lấy câu đầu của summary. */
 const shortDetail = (summary: string) => {
@@ -296,14 +311,26 @@ export async function* askTola(opts: {
   context?: string;
   /** Khi câu hỏi gắn với một chiến dịch cụ thể. */
   campaignId?: string;
+  /**
+   * Bật WebSearch/WebFetch (mặc định bật). Tắt khi đang làm việc trên chiến dịch: mọi câu trả lời nằm
+   * trong DB, còn để web thì model có lúc gọi thử vô nghĩa (đã gặp: tìm "placeholder" chèn giữa các bước).
+   */
+  allowWeb?: boolean;
+  /**
+   * Cho agent mở phân tích sâu (`start_campaign_analysis`). Tắt khi đã có chiến dịch, khi hỏi từ trang
+   * hồ sơ một KOC, và ở lượt báo cáo sau khi phân tích xong (không mở lại lần nữa).
+   */
+  allowDeep?: boolean;
 }): AsyncGenerator<AskEvent> {
   const h = historyText(opts.history ?? []);
   yield* runAgent({
+    builtinTools: opts.allowWeb === false ? [] : WEB_TOOLS,
     system: INTRO_TOLA + RULES,
     prompt: [opts.context ?? "", h ? `Hội thoại trước đó:\n${h}` : "", `Câu hỏi của người bán: ${opts.text}`],
     env: {
       ...(opts.mentioned?.length ? { KOC_CREATORS: opts.mentioned.map((m) => m.creator_id).join(",") } : {}),
       ...(opts.campaignId ? { KOC_CAMPAIGN: opts.campaignId } : {}),
+      ...(opts.allowDeep === false ? { KOC_NO_DEEP: "1" } : {}),
     },
     purpose: "tola",
     names: new Map((opts.mentioned ?? []).map((m) => [m.creator_id, m.name])),
@@ -318,6 +345,8 @@ async function* runAgent(opts: {
   purpose: string;
   /** id → tên KOC, để tiêu đề thẻ ghi rõ đang đọc dữ liệu của ai (chat chiến dịch). */
   names?: Map<string, string>;
+  /** Công cụ CLI có sẵn được bật (web). Mặc định `WEB_TOOLS`. */
+  builtinTools?: string[];
 }): AsyncGenerator<AskEvent> {
   const db = await getDb();
   const session = randomUUID().slice(0, 12);
@@ -328,6 +357,8 @@ async function* runAgent(opts: {
   const web: WebCorpus = { urls: new Set(), text: "" };
   const pendingFetch = new Map<string, string[]>(); // tool_use_id của WebFetch → URL đã đọc
   let final: { text: string; cost_usd: number } | null = null;
+  /** Brief agent giao lại khi gọi `start_campaign_analysis` (null = trả lời bình thường). */
+  let handoff: string | null = null;
   try {
     for await (const ev of claudeAgent({
       system: opts.system,
@@ -335,8 +366,13 @@ async function* runAgent(opts: {
       mcp: { name: "koc", script: "scripts/koc-mcp.ts", env: { KOC_SESSION: session, ...opts.env } },
       model: "sonnet",
       purpose: opts.purpose,
-      builtinTools: WEB_TOOLS,
+      builtinTools: opts.builtinTools ?? WEB_TOOLS,
     })) {
+      if (ev.type === "tool_use" && ev.name.endsWith("start_campaign_analysis")) {
+        // Agent quyết định đây là brief tuyển KOC → không hiện thẻ, giao lại cho route chạy S2→S5
+        handoff = String(ev.input.brief ?? "").trim() || handoff;
+        continue;
+      }
       if (ev.type === "tool_use") {
         const index = n++;
         stepOf.set(ev.id, index);
@@ -382,6 +418,13 @@ async function* runAgent(opts: {
     return;
   }
 
+  if (handoff) {
+    // Không viết câu trả lời ở lượt này: route chạy phân tích sâu rồi gọi agent lần hai để báo kết quả
+    yield { type: "deep_request", brief: handoff };
+    yield { type: "done", cost_usd: final?.cost_usd ?? 0 };
+    return;
+  }
+
   // ── Kiểm chứng câu trả lời theo evidence của phiên ──
   const conclusionIdx = n;
   yield { type: "step_add", title: "Kiểm chứng số liệu & viết câu trả lời", kind: "conclusion" };
@@ -407,7 +450,9 @@ async function* runAgent(opts: {
   // đối chiếu mọi con số với kho số của phiên. Số không có nguồn không bị xoá — bị đánh dấu, vì
   // xoá một câu trong markdown làm vỡ bảng, và người bán cần thấy chỗ nào đáng ngờ hơn là thấy
   // một khoảng trống không giải thích.
-  const pool = docs.map((d) => ({ claim: d.claim, numbers: d.numbers }));
+  // Nguồn số: tóm tắt + số thô + hàng bảng của từng công cụ, và chữ các trang web agent đã đọc trong phiên
+  // (số lấy từ web là có nguồn — link đã được kiểm riêng ở `unknownLinks`)
+  const pool = [...docs.map((d) => ({ claim: d.claim, numbers: d.numbers, rows: d.rows })), ...(web.text ? [{ claim: web.text }] : [])];
   const { unverified, checked } = verifyAnswer(markdown, pool);
   const cited = citationsIn(markdown).filter((id) => evidence.has(id));
   if (!markdown.trim())

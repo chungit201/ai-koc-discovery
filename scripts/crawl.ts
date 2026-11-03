@@ -23,7 +23,7 @@ import {
   type VideoRankRow,
 } from "../src/lib/kalodata/types";
 
-// Category IDs (VN) found via `npm run probe` — docs/03-kalodata.md
+// Category IDs (VN) found via `npm run probe` — docs/04-crawl.md §6
 const CATEGORY = { beauty: "601450", skincare: "848776", sunscreenFace: "601602" };
 
 interface CrawlConfig {

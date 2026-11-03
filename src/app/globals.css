@@ -124,6 +124,58 @@ body {
   animation: shine 4.5s ease-in-out infinite;
 }
 
+/* ── Nút Tola ở thanh dưới (mobile): viền gradient xoay + vòng sáng lan + rô-bốt nhún ── */
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.animate-spin-slow {
+  animation: spin-slow 6s linear infinite;
+}
+
+@keyframes halo {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  70%,
+  100% {
+    transform: scale(1.45);
+    opacity: 0;
+  }
+}
+.animate-halo {
+  animation: halo 2.6s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
+}
+
+@keyframes bob {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  25% {
+    transform: translateY(-2px) rotate(-4deg);
+  }
+  50% {
+    transform: translateY(0) rotate(0deg);
+  }
+  75% {
+    transform: translateY(-2px) rotate(4deg);
+  }
+}
+.animate-bob {
+  animation: bob 3.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-spin-slow,
+  .animate-halo,
+  .animate-bob {
+    animation: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-fade,
   .animate-rise,

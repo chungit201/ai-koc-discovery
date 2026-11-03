@@ -23,7 +23,7 @@ export type AnswerBlock =
   | { type: "advice"; title?: string; items: { text: string; evidence_ids?: string[] }[] }
   | { type: "data"; data: DataBlockId; title?: string }
   /**
-   * Bảng dựng từ **hàng của một bằng chứng trong phiên agent** (docs/10-koc-agent.md): model chỉ trỏ
+   * Bảng dựng từ **hàng của một bằng chứng trong phiên agent** (docs/02-tola-ai.md): model chỉ trỏ
    * `source` = evidence_id, code chép `rows` từ DB vào — model không viết được số nào ở đây.
    */
   | { type: "table"; title?: string; source: string; table: ToolTable }
@@ -94,4 +94,9 @@ export type AskEvent =
   | { type: "conclusion"; text: string; reasons: Reason[]; blocks?: AnswerBlock[]; markdown?: string; unverified?: string[]; follow_ups?: string[] }
   /** Kết thúc luồng; `cost_usd` để đối chiếu chi phí thật. */
   | { type: "done"; cost_usd: number }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  /**
+   * Nội bộ server, không gửi xuống trình duyệt: agent quyết định câu hỏi là brief tuyển KOC và gọi
+   * `start_campaign_analysis` → route chạy phân tích sâu S2→S5 rồi gọi agent lần hai để báo kết quả.
+   */
+  | { type: "deep_request"; brief: string };

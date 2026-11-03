@@ -12,7 +12,7 @@ import { categoryBreakdown, channelTotals, denominator, productFacts, UNCATEGORI
 import { EXCLUDE_LABELS, focusPattern } from "../scoring/rules";
 
 /**
- * Bộ công cụ cho agent hỏi đáp về KOC (docs/10-koc-agent.md, P2). Mỗi hàm **chỉ đọc DB**, trả
+ * Bộ công cụ cho agent hỏi đáp về KOC (docs/02-tola-ai.md). Mỗi hàm **chỉ đọc DB**, trả
  * `{ summary, rows, numbers }` và ghi kết quả thành một bản ghi `evidence` của phiên chat — câu trả
  * lời cuối chỉ được trích các `evidence_id` này, và mọi con số trong câu phải có trong `numbers` của
  * một bằng chứng trong phiên (validator ở P5).
@@ -90,7 +90,13 @@ async function getOverview({ creatorId }: ToolCtx): Promise<Out> {
       )} (${p1(t.shop_revenue / t.revenue)})`,
     );
     if (t.live_number) (numbers.live_number = t.live_number), parts.push(`${t.live_number} phiên live`);
-    if (t.live_gpm) (numbers.live_gpm = t.live_gpm), parts.push(`doanh thu trên 1.000 lượt xem live ${vnd(t.live_gpm)}`);
+    // Dữ liệu crawl web không có sẵn live_gpm (chỉ Open API có) → tính từ doanh thu live / lượt xem live
+    const liveGpm = t.live_gpm || (t.live_views ? (t.live_revenue / t.live_views) * 1000 : 0);
+    if (liveGpm) (numbers.live_gpm = liveGpm), parts.push(`doanh thu trên 1.000 lượt xem live ${vnd(liveGpm)}`);
+    if (t.video_views) {
+      numbers.video_gpm = (t.video_revenue / t.video_views) * 1000;
+      parts.push(`video ${compact(t.video_views)} lượt xem, doanh thu trên 1.000 lượt xem video ${vnd(numbers.video_gpm)}`);
+    }
     if (t.orders && t.live_views) (numbers.live_conversion = t.orders / t.live_views), parts.push(`tỉ lệ chốt đơn trên lượt xem live ${pct(t.orders / t.live_views)}`);
     if (t.product_number) (numbers.product_number = t.product_number), parts.push(`bán ${t.product_number} sản phẩm khác nhau`);
   } else parts.push("chưa có số liệu tổng kênh (trang chi tiết KOC chưa được thu thập)");
@@ -234,7 +240,7 @@ async function listVideos({ creatorId }: ToolCtx, args: Args): Promise<Out> {
   const filter: Record<string, unknown> = { creator_id: creatorId };
   if (args.product_id) filter.product_ids = String(args.product_id);
   const [all, list] = await Promise.all([
-    db.collection(C.videos).find({ creator_id: creatorId }, { projection: { views: 1, likes: 1, revenue: 1, is_ad: 1 } }).toArray(),
+    db.collection(C.videos).find({ creator_id: creatorId }, { projection: { views: 1, likes: 1, revenue: 1, sales: 1, is_ad: 1, ad_revenue_ratio: 1 } }).toArray(),
     db.collection(C.videos).find(filter).sort({ [sort]: -1 }).limit(limit).toArray(),
   ]);
   const pids = [...new Set(list.flatMap((v) => (v.product_ids as string[]) ?? []))];
@@ -258,12 +264,24 @@ async function listVideos({ creatorId }: ToolCtx, args: Args): Promise<Out> {
   }));
   const totViews = all.reduce((a, v) => a + num(v.views), 0);
   const totRev = all.reduce((a, v) => a + num(v.revenue), 0);
+  /**
+   * Thống kê TOÀN BỘ video đã thu thập (không chỉ top N): bao nhiêu video không ra đơn, doanh thu video
+   * đến từ quảng cáo trả phí bao nhiêu (theo tỉ lệ doanh thu QC Kalodata ghi cho từng video). Đây là
+   * phần trả lời "nội dung có tự bán được không" mà xem vài video không nói được.
+   */
+  const selling = all.filter((v) => num(v.revenue) > 0 || num(v.sales) > 0).length;
+  const adRev = all.reduce((a, v) => a + (v.is_ad ? num(v.revenue) * num(v.ad_revenue_ratio) : 0), 0);
+  const adVideoRev = all.filter((v) => v.is_ad).reduce((a, v) => a + num(v.revenue), 0);
   const numbers: Record<string, number> = {
     videos_total: all.length,
     videos_views: totViews,
     videos_revenue: totRev,
     videos_ads: all.filter((v) => v.is_ad).length,
     videos_avg_views: all.length ? totViews / all.length : 0,
+    videos_selling: selling,
+    videos_no_sale: all.length - selling,
+    ad_video_revenue_share: totRev ? adVideoRev / totRev : 0,
+    paid_revenue_share: totRev ? adRev / totRev : 0,
   };
   rows.forEach((r) => {
     numbers[`v${r.rank}_views`] = r.views;
@@ -275,7 +293,11 @@ async function listVideos({ creatorId }: ToolCtx, args: Args): Promise<Out> {
   return {
     type: "video",
     summary:
-      `${all.length} video đã thu thập (30 ngày), tổng ${compact(totViews)} lượt xem, ${vnd(totRev)} doanh thu từ video, ${numbers.videos_ads} video chạy quảng cáo. ` +
+      `${all.length} video đã thu thập (30 ngày), tổng ${compact(totViews)} lượt xem (trung bình ${compact(numbers.videos_avg_views)}/video), ${vnd(totRev)} doanh thu từ video. ` +
+      `${selling}/${all.length} video có ra đơn, ${numbers.videos_no_sale} video không ra đơn nào. ` +
+      `${numbers.videos_ads}/${all.length} video chạy quảng cáo; video có chạy QC mang về ${p1(numbers.ad_video_revenue_share)} doanh thu video, trong đó phần do chính quảng cáo trả phí tạo ra ≈ ${p1(
+        numbers.paid_revenue_share,
+      )} doanh thu video (theo tỉ lệ doanh thu QC Kalodata ghi cho từng video). ` +
       `${rows.length} video ${args.product_id ? "gắn sản phẩm này " : ""}theo ${sort === "revenue" ? "doanh thu" : "lượt xem"}: ` +
       rows
         .map(
@@ -295,8 +317,10 @@ async function listVideos({ creatorId }: ToolCtx, args: Args): Promise<Out> {
 /**
  * AI **xem** video (4 khung hình + tiêu đề, không có âm thanh) — dùng lại `analyseVideo` của S4 nên
  * cache theo video: video đã xem ở chiến dịch hay lần hỏi trước thì 0 token. Đây là công cụ duy nhất
- * tốn tiền; tối đa 3 video mỗi lần. Điểm số là nhận định của AI, không phải số đo.
+ * tốn tiền; tối đa ANALYZE_MAX (5) video mỗi lần — 5 cho câu hỏi về chất lượng nội dung, đủ thấy khuôn review. Điểm số là nhận định của AI, không phải số đo.
  */
+const ANALYZE_MAX = 5;
+
 async function analyzeVideos({ creatorId }: ToolCtx, args: Args): Promise<Out> {
   const db = await getDb();
   const all = await db.collection(C.videos).find({ creator_id: creatorId }, { projection: { title: 1, views: 1, revenue: 1, sales: 1, is_ad: 1, product_ids: 1 } }).toArray();
@@ -307,9 +331,9 @@ async function analyzeVideos({ creatorId }: ToolCtx, args: Args): Promise<Out> {
     // Mặc định: 2 video doanh thu cao nhất + 1 video nhiều view nhất
     const byRev = [...all].sort((a, b) => num(b.revenue) - num(a.revenue));
     const byViews = [...all].sort((a, b) => num(b.views) - num(a.views));
-    for (const v of [byRev[0], byRev[1], byViews[0], ...byViews]) if (v && !picks.some((p) => p._id === v._id) && picks.length < 3) picks.push(v);
+    for (const v of [byRev[0], byRev[1], byViews[0], ...byViews]) if (v && !picks.some((p) => p._id === v._id) && picks.length < 3) picks.push(v); // mặc định vẫn 3 cho câu hỏi chung
   }
-  picks = picks.slice(0, 3);
+  picks = picks.slice(0, ANALYZE_MAX);
   const pids = [...new Set(picks.flatMap((v) => (v.product_ids as string[]) ?? []))];
   const names = new Map((await db.collection(C.products).find({ _id: { $in: pids as never[] } }, { projection: { name: 1 } }).toArray()).map((p) => [String(p._id), String(p.name ?? "")]));
   let cost = 0;
@@ -401,6 +425,59 @@ async function getDaily({ creatorId }: ToolCtx): Promise<Out> {
   };
 }
 
+// ── list_shops ────────────────────────────────────────────────────────────────
+/**
+ * Tab "Cửa hàng" của KOC (Kalodata searchCooperativeShops → `creator_shops`): các shop KOC hợp tác bán,
+ * doanh thu / đơn / số sản phẩm mỗi shop, tách live/video. Chỉ kỳ mới nhất — gộp các kỳ sẽ cộng trùng.
+ */
+async function listShops({ creatorId }: ToolCtx, args: Args): Promise<Out> {
+  const db = await getDb();
+  const last = await db.collection(C.creatorShops).findOne({ creator_id: creatorId }, { sort: { date_range: -1 }, projection: { date_range: 1 } });
+  const src = { collection: C.creatorShops, ref: creatorId };
+  if (!last) return { type: "metric", summary: "Chưa thu thập dữ liệu cửa hàng (tab Cửa hàng) cho KOC này", rows: [], numbers: {}, source: src };
+  const all = await db.collection(C.creatorShops).find({ creator_id: creatorId, date_range: last.date_range }).sort({ revenue: -1 }).toArray();
+  const total = all.reduce((a, s) => a + num(s.revenue), 0);
+  const q = typeof args.shop === "string" ? args.shop.trim().toLowerCase() : "";
+  const picked = q ? all.filter((s) => String(s.shop_name ?? "").toLowerCase().includes(q)) : all;
+  const limit = int(args.limit, 10, 50);
+  const rows = picked.slice(0, limit).map((s, i) => ({
+    rank: all.indexOf(s) + 1,
+    shop: String(s.shop_name ?? `người bán ${s.seller_id}`),
+    seller_id: String(s.seller_id),
+    type: s.seller_type === "BRAND" ? "thương hiệu" : s.seller_type === "RETAILER" ? "nhà bán lẻ" : "—",
+    revenue: num(s.revenue),
+    share: total ? num(s.revenue) / total : 0,
+    live_revenue: num(s.live_revenue),
+    video_revenue: num(s.video_revenue),
+    orders: num(s.sales),
+    products: num(s.product_count),
+    _i: i,
+  }));
+  const top = all[0];
+  const numbers: Record<string, number> = { shops: all.length, total_revenue: total, top_share: total ? num(top?.revenue) / total : 0 };
+  rows.forEach((r) => {
+    numbers[`shop${r.rank}_revenue`] = r.revenue;
+    numbers[`shop${r.rank}_share`] = r.share;
+    numbers[`shop${r.rank}_orders`] = r.orders;
+    numbers[`shop${r.rank}_products`] = r.products;
+  });
+  const head = q
+    ? `${picked.length ? `${picked.length} cửa hàng khớp '${q}'` : `KHÔNG có cửa hàng nào khớp '${q}'`} trong ${all.length} cửa hàng KOC hợp tác (${last.date_range}).`
+    : `${last.date_range}: KOC hợp tác bán cho ${all.length} cửa hàng, tổng ${vnd(total)}; cửa hàng lớn nhất chiếm ${p1(numbers.top_share)}.`;
+  return {
+    type: "metric",
+    summary:
+      head +
+      " " +
+      rows
+        .map((r) => `#${r.rank} ${r.shop} (${r.type}) ${vnd(r.revenue)} (${p1(r.share)}), live ${vnd(r.live_revenue)}, video ${vnd(r.video_revenue)}, ${compact(r.orders)} đơn, ${compact(r.products)} sản phẩm`)
+        .join("; "),
+    rows: rows.map(({ _i, ...r }) => r), // eslint-disable-line @typescript-eslint/no-unused-vars
+    numbers,
+    source: src,
+  };
+}
+
 // ── get_peers ─────────────────────────────────────────────────────────────────
 const COSMETICS = "848776,848648";
 
@@ -452,12 +529,28 @@ async function getPeers({ creatorId }: ToolCtx): Promise<Out> {
     .toArray();
   const gpm = new Map<string, number>();
   for (const d of details) if (!gpm.has(String(d.creator_id))) gpm.set(String(d.creator_id), num(d.live_gpm));
+  /**
+   * Số tổng kênh từ crawl web (`detail/total`): doanh thu/1.000 lượt xem live khi Open API không có
+   * `live_gpm`, và tổng lượt xem video 30 ngày — để so "nội dung video có kéo người xem không" với nhóm.
+   * KOC chưa crawl chi tiết thì không có → bỏ khỏi phép so đó (không coi là 0).
+   */
+  const webTotals = await db
+    .collection(C.creatorMetrics)
+    .find({ creator_id: { $in: [creatorId, ...peers.map((p) => String(p.creator_id))] }, source: "web:creator/detail/total", category_scope: "all" }, { projection: { creator_id: 1, live_revenue: 1, live_views: 1, video_views: 1, updated_at: 1 } })
+    .sort({ updated_at: -1 })
+    .toArray();
+  const videoViews = new Map<string, number>();
+  for (const w of webTotals) {
+    const id = String(w.creator_id);
+    if (!videoViews.has(id) && num(w.video_views) > 0) videoViews.set(id, num(w.video_views));
+    if (!gpm.get(id) && num(w.live_views) > 0) gpm.set(id, (num(w.live_revenue) / num(w.live_views)) * 1000);
+  }
 
   const all = [
-    { creator_id: creatorId, name: String(creator?.nickname ?? ""), handle: String(creator?.handle ?? ""), followers, revenue: myRev, engagement: myEng, live_gpm: gpm.get(creatorId) ?? 0, self: true },
+    { creator_id: creatorId, name: String(creator?.nickname ?? ""), handle: String(creator?.handle ?? ""), followers, revenue: myRev, engagement: myEng, live_gpm: gpm.get(creatorId) ?? 0, video_views: videoViews.get(creatorId) ?? 0, self: true },
     ...peers.map((r) => {
       const m = meta.get(String(r.creator_id))!;
-      return { creator_id: String(r.creator_id), name: m.name, handle: m.handle, followers: m.followers, revenue: num(r.revenue), engagement: num(r.video_engagement_rate), live_gpm: gpm.get(String(r.creator_id)) ?? 0, self: false };
+      return { creator_id: String(r.creator_id), name: m.name, handle: m.handle, followers: m.followers, revenue: num(r.revenue), engagement: num(r.video_engagement_rate), live_gpm: gpm.get(String(r.creator_id)) ?? 0, video_views: videoViews.get(String(r.creator_id)) ?? 0, self: false };
     }),
   ].sort((a, b) => b.revenue - a.revenue);
   const rows = all.map((r, i) => ({ rank: i + 1, ...r }));
@@ -479,6 +572,13 @@ async function getPeers({ creatorId }: ToolCtx): Promise<Out> {
   if (sorted[0]) numbers.second_revenue = sorted[0].revenue;
   if (myGpm > 0 && gpms.length >= 3)
     Object.assign(numbers, { my_live_gpm: myGpm, median_live_gpm: median(gpms), live_gpm_rank: 1 + gpms.filter((g) => g > myGpm).length, live_gpm_peers: gpms.length });
+  // Lượt xem video 30 ngày so với nhóm (chỉ những KOC đã có số này)
+  const vvs = others.map((r) => r.video_views).filter((v) => v > 0);
+  const myVv = videoViews.get(creatorId) ?? 0;
+  if (myVv > 0 && vvs.length >= 3) {
+    const meanVv = vvs.reduce((a, v) => a + v, 0) / vvs.length;
+    Object.assign(numbers, { my_video_views: myVv, median_video_views: median(vvs), mean_video_views: meanVv, video_views_vs_mean: myVv / meanVv, video_views_rank: 1 + vvs.filter((v) => v > myVv).length, video_views_peers: vvs.length });
+  }
   return {
     type: "metric",
     summary:
@@ -488,8 +588,11 @@ async function getPeers({ creatorId }: ToolCtx): Promise<Out> {
       (numbers.my_live_gpm
         ? `. Doanh thu/1.000 lượt xem live ${vnd(myGpm)} vs trung vị ${vnd(numbers.median_live_gpm)}, xếp ${numbers.live_gpm_rank}/${gpms.length + 1}`
         : "") +
+      (numbers.my_video_views
+        ? `. Lượt xem video 30 ngày ${compact(myVv)} vs trung bình nhóm ${compact(numbers.mean_video_views)} (bằng ${p1(numbers.video_views_vs_mean)}), xếp ${numbers.video_views_rank}/${numbers.video_views_peers + 1}`
+        : "") +
       `. Danh sách: ` +
-      rows.map((r) => `#${r.rank} ${r.name}${r.self ? " (KOC này)" : ""} ${vnd(r.revenue)}, ${compact(r.followers)} follower`).join("; "),
+      rows.map((r) => `#${r.rank} ${r.name}${r.self ? " (KOC này)" : ""} ${vnd(r.revenue)}, ${compact(r.followers)} follower${r.video_views ? `, ${compact(r.video_views)} lượt xem video` : ""}`).join("; "),
     rows,
     numbers,
     source: { collection: C.creatorMetrics, ref: `peers:${peers.length}` },
@@ -1242,8 +1345,16 @@ const TOLERANCE = 0.005;
 
 async function sessionNumbers(sessionId: string): Promise<number[]> {
   const db = await getDb();
-  const docs = await db.collection(C.evidence).find({ session_id: sessionId }, { projection: { numbers: 1 } }).toArray();
-  return docs.flatMap((d) => Object.values((d.numbers as Record<string, number>) ?? {}));
+  const docs = await db.collection(C.evidence).find({ session_id: sessionId }, { projection: { numbers: 1, rows: 1 } }).toArray();
+  /**
+   * Cả số trong HÀNG bảng (doanh thu từng ngày của get_daily, từng shop, từng video…), không chỉ
+   * `numbers` tổng hợp. Thiếu thì "tổng 7 ngày gần nhất" bị calc từ chối dù mọi số đều lấy từ công cụ
+   * (đã gặp ở bộ test v2, câu K216) — cùng quy tắc với bộ kiểm chứng câu trả lời (answer-verify.ts).
+   */
+  return docs.flatMap((d) => [
+    ...Object.values((d.numbers as Record<string, number>) ?? {}),
+    ...((d.rows as Record<string, unknown>[]) ?? []).flatMap((r) => Object.values(r ?? {}).filter((v): v is number => typeof v === "number" && Number.isFinite(v))),
+  ]);
 }
 
 const known = (v: number, pool: number[]) => pool.some((k) => (k === 0 ? v === 0 : Math.abs(v - k) / Math.abs(k) <= TOLERANCE));
@@ -1316,8 +1427,8 @@ export const KOC_TOOLS: ToolSpec[] = [
   {
     name: "analyze_videos",
     description:
-      "AI XEM video (4 khung hình + tiêu đề, không có âm thanh): có demo sản phẩm không, thấy sản phẩm gì, chất lượng hình, độ tự nhiên, ghi chú từng khung. Truyền video_ids (tối đa 3, lấy từ list_videos); bỏ trống = 2 video doanh thu cao nhất + 1 video nhiều view nhất. Tốn tiền nếu video chưa từng được xem.",
-    input_schema: obj({ video_ids: { type: "array", items: { type: "string" }, maxItems: 3 } }),
+      "AI XEM video (4 khung hình + tiêu đề, không có âm thanh): có demo sản phẩm không, thấy sản phẩm gì, chất lượng hình, độ tự nhiên, ghi chú từng khung. Truyền video_ids (tối đa 5, lấy từ list_videos); bỏ trống = 2 video doanh thu cao nhất + 1 video nhiều view nhất. Tốn tiền nếu video chưa từng được xem.",
+    input_schema: obj({ video_ids: { type: "array", items: { type: "string" }, maxItems: 5 } }),
     run: analyzeVideos,
   },
   {
@@ -1414,6 +1525,35 @@ export const KOC_TOOLS: ToolSpec[] = [
       "GHI: cho AI XEM VIDEO của MỘT KOC trong chiến dịch (4 khung hình/video, không có âm thanh) để kiểm chứng họ có thật sự demo sản phẩm, rồi cập nhật điểm và chọn lại. Dùng khi người bán muốn xem kỹ một người cụ thể. Chỉ 1 KOC mỗi lần vì đây là bước tốn tiền và chậm nhất — không bao giờ gọi cho cả danh sách.",
     input_schema: obj({ creator_id: { type: "string", description: "id KOC muốn xem video, lấy từ campaign_context" } }, ["creator_id"]),
     run: deepenKoc,
+  },
+  {
+    name: "list_shops",
+    description:
+      "Các CỬA HÀNG (shop / nhà bán / thương hiệu) mà KOC hợp tác bán hàng — tab 'Cửa hàng' của Kalodata: tên shop, thương hiệu hay nhà bán lẻ, doanh thu KOC bán cho shop đó (% tổng), tách live/video, số đơn, số sản phẩm. Dùng khi hỏi 'bán cho shop nào', 'hợp tác với thương hiệu nào', 'có bán cho X không'. Truyền `shop` để lọc theo tên.",
+    input_schema: obj({
+      shop: { type: "string", description: "Lọc theo tên shop/thương hiệu, vd 'Lubylab'" },
+      limit: { type: "integer", minimum: 1, maximum: 50, default: 10 },
+    }),
+    run: listShops,
+  },
+  {
+    name: "start_campaign_analysis",
+    description:
+      "Mở PHÂN TÍCH SÂU tuyển KOC cho một chiến dịch: lọc & chấm điểm toàn bộ KOC trong ngành, AI đọc nội dung + xem khung hình video để kiểm chứng demo sản phẩm, chọn KOC trong ngân sách và chia tiền — mất vài phút. " +
+      "DÙNG KHI người bán muốn TUYỂN/BOOK KOC để quảng bá một sản phẩm/ngành hàng của họ (thường kèm số KOC cần, ngân sách, khán giả mục tiêu, MCN, yêu cầu về review), vd 'tìm 5 KOC bán kem chống nắng, nữ 18-30, ngân sách 30 triệu', 'cần 10 KOC trang điểm chưa ký MCN'. " +
+      "KHÔNG dùng cho câu tra cứu / xếp hạng / so sánh ('top 20 KOC doanh thu cao nhất', 'ai nhiều follower nhất', 'so A với B') — những câu đó dùng search_creators. " +
+      "Gọi xong thì DỪNG NGAY, không gọi thêm công cụ, không viết câu trả lời: hệ thống tự chạy phân tích rồi giao lại kết quả cho bạn ở lượt sau.",
+    input_schema: obj(
+      { brief: { type: "string", description: "Yêu cầu tuyển KOC, chép NGUYÊN VĂN lời người bán (gộp cả chi tiết họ nói ở các câu trước trong hội thoại, nếu có)" } },
+      ["brief"],
+    ),
+    run: async (_ctx, args) => ({
+      type: "metric",
+      summary: `Đã nhận yêu cầu tuyển KOC: '${String(args.brief ?? "").slice(0, 200)}'. Hệ thống sẽ chạy phân tích sâu ngay sau lượt này. DỪNG lại bây giờ: không gọi thêm công cụ, chỉ trả lời đúng một dòng "ok".`,
+      rows: [],
+      numbers: {},
+      source: { collection: C.campaigns, ref: "start_campaign_analysis" },
+    }),
   },
   {
     name: "calc",

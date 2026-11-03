@@ -229,6 +229,21 @@ export async function listTolaThreads(limit = 40): Promise<TolaThreadView[]> {
   return rows.map((t) => ({ id: String(t._id), title: String(t.title ?? "Hội thoại"), updated_at: (t.updated_at as Date) ?? new Date() }));
 }
 
+export interface TolaSubject {
+  id: string;
+  handle: string;
+  name: string;
+}
+
+/** KOC mà người dùng mang từ trang hồ sơ sang `/tola?koc=<id>`; `null` khi id không tồn tại. */
+export async function getTolaSubject(id: string): Promise<TolaSubject | null> {
+  const db = await getDb();
+  const c = await db.collection(C.creators).findOne({ _id: id as never }, { projection: { handle: 1, nickname: 1 } });
+  if (!c) return null;
+  const handle = String(c.handle ?? "").replace(/^@/, "");
+  return { id, handle, name: String(c.nickname || handle || id) };
+}
+
 /** Một hội thoại cụ thể; `null` khi id không tồn tại. */
 export async function getTolaThread(id: string): Promise<{ id: string; title: string; messages: ChatMessage[] } | null> {
   const db = await getDb();
@@ -244,6 +259,16 @@ export async function getTolaThread(id: string): Promise<{ id: string; title: st
  */
 
 // ── KOC detail ───────────────────────────────────────────────────────────────
+
+/** Thông tin một sản phẩm gắn trong video. Số bán là của CHÍNH KOC này, kỳ 30 ngày mới nhất (null nếu không lọt top sản phẩm đã crawl). */
+export interface VideoProductInfo {
+  name: string;
+  seller_id: string | null;
+  seller_name: string | null;
+  unit_price: number | null;
+  revenue: number | null;
+  sales: number | null;
+}
 
 export async function getKoc(id: string) {
   const db = await getDb();
@@ -264,12 +289,41 @@ export async function getKoc(id: string) {
     ])
     .toArray();
   const videos = await db.collection(C.videos).find({ creator_id: id }).sort({ revenue: -1, views: -1 }).limit(30).toArray();
-  // Các cuộc trò chuyện hỏi đáp về chính KOC này (mỗi cuộc là một doc trong `creator_chats`)
-  const threads = (await db.collection(C.creatorChats).find({ creator_id: id }).sort({ updated_at: -1 }).limit(20).toArray()).map((t) => ({
+  // Tab "Cửa hàng": chỉ khoảng ngày mới nhất (mỗi lần crawl một cửa sổ 30 ngày — gộp các kỳ sẽ cộng trùng)
+  const lastShop = await db.collection(C.creatorShops).findOne({ creator_id: id }, { sort: { date_range: -1 }, projection: { date_range: 1 } });
+  const shops = lastShop
+    ? await db.collection(C.creatorShops).find({ creator_id: id, date_range: lastShop.date_range }).sort({ revenue: -1 }).toArray()
+    : [];
+  // Popup hỏi đáp dùng chung lịch sử với /tola (`tola_chats`) — hiện mọi hội thoại, không lọc theo KOC
+  const threads = (await db.collection(C.tolaChats).find({}).sort({ updated_at: -1 }).limit(20).toArray()).map((t) => ({
     id: String(t._id),
     title: String(t.title ?? "Cuộc trò chuyện"),
     updated_at: (t.updated_at as Date) ?? (t.created_at as Date) ?? new Date(),
     messages: ((t.messages as ChatMessage[]) ?? []).slice(-40),
   }));
-  return { creator, metrics, products, videos, threads };
+  // Sản phẩm gắn trong video → thẻ thông tin khi hover ảnh sản phẩm ở bảng video (tên, shop, giá, KOC bán được bao nhiêu)
+  const vpids = [...new Set(videos.flatMap((v) => (v.product_ids as string[]) ?? []))];
+  const [vprods, vsales] = await Promise.all([
+    db.collection(C.products).find({ _id: { $in: vpids as never[] } }, { projection: { name: 1, seller_id: 1, seller_name: 1 } }).toArray(),
+    db.collection(C.creatorProducts).find({ creator_id: id, product_id: { $in: vpids } }).sort({ date_range: -1 }).toArray(),
+  ]);
+  const saleOf = new Map<string, (typeof vsales)[number]>();
+  for (const s of vsales) if (!saleOf.has(String(s.product_id))) saleOf.set(String(s.product_id), s); // kỳ mới nhất
+  const videoProducts: Record<string, VideoProductInfo> = Object.fromEntries(
+    vprods.map((p) => {
+      const s = saleOf.get(String(p._id));
+      return [
+        String(p._id),
+        {
+          name: String(p.name ?? ""),
+          seller_id: p.seller_id ? String(p.seller_id) : null,
+          seller_name: p.seller_name ? String(p.seller_name) : null,
+          unit_price: typeof s?.unit_price === "number" ? s.unit_price : null,
+          revenue: typeof s?.revenue === "number" ? s.revenue : null,
+          sales: typeof s?.sales_volume === "number" ? s.sales_volume : null,
+        },
+      ];
+    }),
+  );
+  return { creator, metrics, products, videos, shops, threads, videoProducts };
 }

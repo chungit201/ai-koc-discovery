@@ -7,12 +7,15 @@
 # shop names (scripts/crawl-shops.ts).
 # Safety: exit code 3 from the crawler = Kalodata account warning/lock → writes .cache/crawl-halted and
 # never restarts until a human deletes that file.
+# Exit code 4 = a LIMIT was hit (our daily cap, Kalodata "limit"/quota message, HTTP 429) → writes
+# .cache/crawl-limited and stops for good (no 10-min retry loop). Delete the file and restart the task to resume.
 param([string]$Resume = "", [string]$Extra = "", [switch]$Fill, [switch]$Install)
 
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 New-Item -ItemType Directory -Force logs, .cache | Out-Null
 $halt = Join-Path $root ".cache\crawl-halted"
+$limited = Join-Path $root ".cache\crawl-limited"
 
 if ($Install) {
   $mode = if ($Fill) { "-Fill" } elseif ($Resume) { "-Resume $Resume" } else { "" }
@@ -28,6 +31,7 @@ if ($Install) {
 $crawlArgs = if ($Fill) { @("--fill-missing", "--categories", "848776,848648", "--top", "1000") + ($Extra -split ' ' | Where-Object { $_ }) } elseif ($Resume) { @("--resume", $Resume) + ($Extra -split ' ' | Where-Object { $_ }) } else { @("--categories", "848776,848648", "--ages", "18-24,25-34", "--pages", "40", "--top", "500", "--followers", "none") }
 
 while ($true) {
+  if (Test-Path $limited) { "$(Get-Date -Format s) limited: $(Get-Content $limited -Raw)" | Out-File "logs/crawl-web-halted.log" -Append -Encoding utf8; exit 0 }
   if (Test-Path $halt) { "$(Get-Date -Format s) halted: $(Get-Content $halt -Raw)" | Out-File "logs/crawl-web-halted.log" -Append -Encoding utf8; exit 0 }
   $log = "logs/crawl-web-$(Get-Date -Format yyyyMMdd-HHmm).log"
   "$(Get-Date -Format s) start crawl $($crawlArgs -join ' ')" | Out-File $log -Encoding utf8
@@ -36,13 +40,21 @@ while ($true) {
   $code = $LASTEXITCODE
   "$(Get-Date -Format s) exit $code" | Out-File $log -Append -Encoding utf8
   if ($code -eq 0 -and $Fill) {
-    # KOC data complete → then fill shop names from the web shop ranking (same pacing / daily cap)
+    # KOC data complete → tab "Cửa hàng" for KOCs crawled before that step existed (1 request/KOC)
+    "$(Get-Date -Format s) start creator-shops" | Out-File $log -Append -Encoding utf8
+    cmd /c "npx tsx --env-file=.env.local scripts/crawl-creator-shops.ts >> `"$log`" 2>&1"
+    $code = $LASTEXITCODE
+    "$(Get-Date -Format s) creator-shops exit $code" | Out-File $log -Append -Encoding utf8
+  }
+  if ($code -eq 0 -and $Fill) {
+    # then fill remaining shop names from the web shop ranking (same pacing / daily cap)
     "$(Get-Date -Format s) start shops" | Out-File $log -Append -Encoding utf8
     cmd /c "npx tsx --env-file=.env.local scripts/crawl-shops.ts >> `"$log`" 2>&1"
     $code = $LASTEXITCODE
     "$(Get-Date -Format s) shops exit $code" | Out-File $log -Append -Encoding utf8
   }
   if ($code -eq 0) { exit 0 }                                   # finished
+  if ($code -eq 4) { "limit reached at $(Get-Date -Format s), see $log" | Out-File $limited -Encoding utf8; exit 0 }   # limit → stop, no retry
   if ($code -eq 3) { "account warning/lock at $(Get-Date -Format s), see $log" | Out-File $halt -Encoding utf8; exit 0 }
   Start-Sleep 600                                               # transient error (network/DB) → retry in 10 min
 }

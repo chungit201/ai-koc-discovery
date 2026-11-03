@@ -1,6 +1,6 @@
 import type { Db } from "mongodb";
 
-// Collection names — see docs/04-data-model.md
+// Collection names — see docs/03-database.md
 export const C = {
   rawResponses: "raw_responses",
   apiCalls: "api_calls",
@@ -15,7 +15,9 @@ export const C = {
   favorites: "favorites", // KOCs saved with the star button
   campaigns: "campaigns", // deep-search briefs entered in the UI
   campaignScores: "campaign_scores", // S2: per (campaign, creator) eligibility + component scores
-  evidence: "evidence", // one row per claim, cited by reasons (docs/04-data-model.md §3)
+  evidence: "evidence", // one row per claim, cited by reasons (docs/02-tola-ai.md §5)
+  shops: "shops", // người bán (seller) — tên shop do `crawl:shops` điền
+  creatorShops: "creator_shops", // tab "Cửa hàng" của KOC: 1 KOC × 1 shop hợp tác × khoảng ngày (web /creator/detail/searchCooperativeShops)
   llmCache: "llm_cache",
   llmModels: "llm_models", // alias ("haiku") → full model id last seen, for version-aware cache keys
   aiAssessments: "ai_assessments", // per-KOC AI analyses keyed by (creator, content_hash, model_id, prompt_version) // identical LLM prompts → cached answer (0 tokens on repeat)
@@ -79,6 +81,7 @@ export async function ensureIndexes(db: Db): Promise<void> {
     { creator_id: 1, product_id: 1, date_range: 1 },
     { unique: true },
   );
+  await db.collection(C.creatorShops).createIndex({ creator_id: 1, seller_id: 1, date_range: 1 }, { unique: true });
   await db.collection(C.videos).createIndex({ creator_id: 1 });
   await db.collection(C.stageItems).createIndex({ run_id: 1, stage: 1, item_id: 1 }, { unique: true });
   await db.collection(C.stageItems).createIndex({ run_id: 1, stage: 1, status: 1 });

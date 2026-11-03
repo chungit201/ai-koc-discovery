@@ -3,8 +3,11 @@
 import { MessageSquare, PanelLeft, Plus, X } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { usePathname } from "next/navigation";
 import type { TolaThreadView } from "@/lib/data/queries";
+import { AI_NAME } from "@/lib/brand";
+import { TolaOrb } from "./tola-mark";
 
 /**
  * Lịch sử hội thoại của trợ lý, hai dạng cho hai khổ màn hình:
@@ -54,9 +57,39 @@ function NewChat({ onPick }: { onPick?: () => void }) {
   );
 }
 
-export function TolaHistoryPanel({ threads }: { threads: TolaThreadView[] }) {
+function Brand() {
   return (
-    <aside className="hidden w-60 shrink-0 flex-col border-r border-line bg-white lg:flex">
+    <Link href="/tola" className="flex min-w-0 items-center gap-2 text-[15px] font-bold">
+      <TolaOrb size={30} />
+      {AI_NAME}
+    </Link>
+  );
+}
+
+const iconBtn = "grid h-8 w-8 shrink-0 place-items-center rounded-lg text-ink-muted transition hover:bg-zinc-100 hover:text-ink";
+
+/** Cột lịch sử trên desktop: logo Tola + nút thu gọn ở đầu; thu gọn còn dải hẹp chỉ có icon. */
+export function TolaHistoryPanel({ threads }: { threads: TolaThreadView[] }) {
+  const [collapsed, setCollapsed] = useState(false);
+  if (collapsed)
+    return (
+      <aside className="sticky top-0 hidden h-screen w-14 shrink-0 flex-col items-center gap-2 border-r border-line bg-white py-3 lg:flex">
+        <button type="button" onClick={() => setCollapsed(false)} aria-label="Mở lịch sử hội thoại" title="Mở lịch sử hội thoại" className={iconBtn}>
+          <PanelLeft size={18} />
+        </button>
+        <Link href="/tola" aria-label="Cuộc trò chuyện mới" title="Cuộc trò chuyện mới" className="grid h-8 w-8 place-items-center rounded-full bg-ink text-white transition hover:bg-zinc-800">
+          <Plus size={16} strokeWidth={2.6} />
+        </Link>
+      </aside>
+    );
+  return (
+    <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-line bg-white lg:flex">
+      <div className="flex items-center justify-between gap-2 px-4 pt-3">
+        <Brand />
+        <button type="button" onClick={() => setCollapsed(true)} aria-label="Thu gọn" title="Thu gọn" className={iconBtn}>
+          <PanelLeft size={18} />
+        </button>
+      </div>
       <NewChat />
       <List threads={threads} />
     </aside>
@@ -75,7 +108,10 @@ export function TolaHistoryDrawer({ threads }: { threads: TolaThreadView[] }) {
       >
         <PanelLeft size={18} />
       </button>
-      {open && (
+      {/* Portal ra body: nút nằm trong header có `backdrop-blur`, mà backdrop-filter biến header thành
+          khung chứa của `position: fixed` → không portal thì tấm trượt bị nhốt trong chiều cao header */}
+      {open &&
+        createPortal(
         <div className="fixed inset-0 z-50 flex bg-zinc-950/40 backdrop-blur-sm lg:hidden" onClick={() => setOpen(false)} role="dialog" aria-modal="true" aria-label="Lịch sử hội thoại">
           <div onClick={(e) => e.stopPropagation()} className="flex w-[78%] max-w-[300px] flex-col bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-line px-4 py-3">
@@ -87,8 +123,9 @@ export function TolaHistoryDrawer({ threads }: { threads: TolaThreadView[] }) {
             <NewChat onPick={() => setOpen(false)} />
             <List threads={threads} onPick={() => setOpen(false)} />
           </div>
-        </div>
-      )}
+        </div>,
+          document.body,
+        )}
     </>
   );
 }

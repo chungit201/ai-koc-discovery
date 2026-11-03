@@ -1,0 +1,19 @@
+﻿2026-11-03T23:55:01 start crawl --fill-missing --categories 848776,848648 --top 1000
+▶ new web run f8fb80b5-095c-4136-becf-db33e6de8789 {
+  category_ids: [ '848776', '848648' ],
+  category_id: '848776,848648',
+  start_date: '2026-10-02',
+  end_date: '2026-10-31',
+  follower_gender: '2',
+  follower_ages: [ '18-24', '25-34' ],
+  creator_type: 'INDEPENDENT',
+  followers: '10000-1000000',
+  page_size: 50,
+  pages: 1,
+  top: 1000,
+  products_per_creator: 50,
+  videos_per_creator: 30,
+  mode: 'fill'
+}
+✖ không mở được phiên: daily cap 2000 reached — crawl dừng, chạy lại sau khi trần 24h có chỗ trống
+2026-11-03T23:55:05 exit 4

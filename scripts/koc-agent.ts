@@ -1,5 +1,5 @@
 /**
- * Thử chế độ agent (docs/10-koc-agent.md, P4): Claude CLI + MCP "koc", in từng lần gọi công cụ.
+ * Thử chế độ agent (docs/02-tola-ai.md): Claude CLI + MCP "koc", in từng lần gọi công cụ.
  *   npm run koc:agent -- <creator_id|@handle> "<câu hỏi>" [--haiku]
  * Prompt hệ thống ở đây chỉ để thử luồng; prompt thật + validator nằm ở chat-creator (P5).
  */

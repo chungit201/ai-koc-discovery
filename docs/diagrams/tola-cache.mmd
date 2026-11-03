@@ -1,0 +1,5 @@
+flowchart LR
+  P[prompt + system + ảnh] --> K["key = sha256(alias, system, prompt, hash ảnh)"]
+  K --> L{llm_cache có?}
+  L -- có --> HIT[trả text, 0 token<br/>api_calls.cache_hit = true]
+  L -- không --> CLI[claude -p] --> SAVE[lưu llm_cache<br/>+ llm_models]
