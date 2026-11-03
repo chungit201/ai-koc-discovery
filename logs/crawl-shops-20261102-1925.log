@@ -1,0 +1,43 @@
+
+> detola-koc-discovery@0.1.0 crawl:shops
+> tsx --env-file=.env.local scripts/crawl-shops.ts
+
+▶ shops: 3001 sellers without a name
+  pacing: 120/h reached, waiting 5 min…
+  page 1: +5 named · còn 2996
+  page 2: +13 named · còn 2983
+  page 3: +19 named · còn 2964
+  page 4: +23 named · còn 2941
+  page 5: +28 named · còn 2913
+  page 6: +20 named · còn 2893
+  page 7: +24 named · còn 2869
+  page 8: +20 named · còn 2849
+  page 9: +17 named · còn 2832
+  page 10: +23 named · còn 2809
+  page 11: +23 named · còn 2786
+  page 12: +25 named · còn 2761
+  page 13: +25 named · còn 2736
+  page 14: +19 named · còn 2717
+  page 15: +20 named · còn 2697
+  page 16: +14 named · còn 2683
+  page 17: +22 named · còn 2661
+  page 18: +9 named · còn 2652
+  pacing: 120/h reached, waiting 5 min…
+  page 19: +13 named · còn 2639
+  page 20: +9 named · còn 2630
+  page 21: +16 named · còn 2614
+  page 22: +15 named · còn 2599
+  page 23: +18 named · còn 2581
+  page 24: +11 named · còn 2570
+  page 25: +5 named · còn 2565
+  page 26: +12 named · còn 2553
+  page 27: +6 named · còn 2547
+  page 28: +8 named · còn 2539
+  page 29: +11 named · còn 2528
+  page 30: +8 named · còn 2520
+  page 31: +10 named · còn 2510
+  pacing: daily cap 1000 reached at 19:42:45 2/11/2026, sleeping 30 min…
+  pacing: daily cap 1000 reached at 20:12:45 2/11/2026, sleeping 30 min…
+  pacing: daily cap 1000 reached at 20:42:45 2/11/2026, sleeping 30 min…
+  pacing: daily cap 1000 reached at 21:12:45 2/11/2026, sleeping 30 min…
+  pacing: daily cap 1000 reached at 21:42:45 2/11/2026, sleeping 30 min…

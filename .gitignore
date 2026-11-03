@@ -46,7 +46,6 @@ next-env.d.ts
 
 
 # crawl logs
-logs/
 
 
 # local media cache (keyframe sheets)

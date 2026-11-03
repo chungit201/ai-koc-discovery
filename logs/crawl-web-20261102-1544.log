@@ -1,0 +1,18 @@
+﻿2026-11-02T15:44:36 start crawl --fill-missing --categories 848776,848648 --top 1000
+▶ new web run 3628b5b4-42e3-47b4-9e28-4f6c8f5c548c {
+  category_ids: [ '848776', '848648' ],
+  category_id: '848776,848648',
+  start_date: '2026-10-02',
+  end_date: '2026-10-31',
+  follower_gender: '2',
+  follower_ages: [ '18-24', '25-34' ],
+  creator_type: 'INDEPENDENT',
+  followers: '10000-1000000',
+  page_size: 50,
+  pages: 1,
+  top: 1000,
+  products_per_creator: 50,
+  videos_per_creator: 30,
+  mode: 'fill'
+}
+  pacing: daily cap 1000 reached at 15:44:41 2/11/2026, sleeping 30 min…

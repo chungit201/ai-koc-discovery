@@ -1,0 +1,19 @@
+﻿2026-11-01T15:44:59 start crawl --categories 848776,848648 --ages 18-24,25-34 --pages 40 --top 500 --followers none
+▶ new web run 54532d16-10b6-427d-854a-c5c129a0cee6 {
+  category_ids: [ '848776', '848648' ],
+  category_id: '848776,848648',
+  start_date: '2026-10-02',
+  end_date: '2026-10-31',
+  follower_gender: '2',
+  follower_ages: [ '18-24', '25-34' ],
+  creator_type: 'INDEPENDENT',
+  followers: '',
+  page_size: 50,
+  pages: 40,
+  top: 500,
+  products_per_creator: 50,
+  videos_per_creator: 30
+}
+age 18-24: 4966 creators → 40 pages
+age 25-34: 10643 creators → 40 pages
+  list 25/80

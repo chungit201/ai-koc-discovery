@@ -1,0 +1,7 @@
+﻿2026-11-01T15:46:56 start crawl --resume 54532d16-10b6-427d-854a-c5c129a0cee6 --extend-top 4000 --until 2026-11-04T15:46:50
+▶ resuming web run 54532d16-10b6-427d-854a-c5c129a0cee6
+  list 25/31
+list: { done: 80 }
+deep crawl top 4000
+  koc 10/4000 { done: 10, pending: 3990 }
+  koc 20/4000 { done: 20, pending: 3980 }

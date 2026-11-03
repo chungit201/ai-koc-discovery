@@ -1,0 +1,35 @@
+﻿2026-11-03T13:02:57 start crawl --fill-missing --categories 848776,848648 --top 1000
+▶ new web run d34878c0-5202-42ad-8d24-60ad21df42b9 {
+  category_ids: [ '848776', '848648' ],
+  category_id: '848776,848648',
+  start_date: '2026-10-02',
+  end_date: '2026-10-31',
+  follower_gender: '2',
+  follower_ages: [ '18-24', '25-34' ],
+  creator_type: 'INDEPENDENT',
+  followers: '10000-1000000',
+  page_size: 50,
+  pages: 1,
+  top: 1000,
+  products_per_creator: 50,
+  videos_per_creator: 30,
+  mode: 'fill'
+}
+fill mode: 718 creators in top1000 still missing detail
+  koc 10/718 { pending: 708, done: 10 }
+  koc 20/718 { pending: 698, done: 20 }
+  koc 30/718 { done: 30, pending: 688 }
+  pacing: 180/h reached, waiting 5 min…
+  pacing: 180/h reached, waiting 5 min…
+  pacing: 180/h reached, waiting 5 min…
+  pacing: 180/h reached, waiting 5 min…
+  koc 40/718 { pending: 678, done: 40 }
+  koc 50/718 { done: 50, pending: 668 }
+  koc 60/718 {}
+  pacing: 180/h reached, waiting 5 min…
+  pacing: 180/h reached, waiting 5 min…
+  pacing: 180/h reached, waiting 5 min…
+  pacing: 180/h reached, waiting 5 min…
+  koc 70/718 {}
+  koc 80/718 {}
+2026-11-03T15:54:20 exit -1

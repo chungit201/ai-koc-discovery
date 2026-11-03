@@ -1,0 +1,37 @@
+﻿2026-11-03T19:19:16 start crawl --fill-missing --categories 848776,848648 --top 1000
+▶ new web run 284cd8d2-37e2-431e-9b21-a092f69b06af {
+  category_ids: [ '848776', '848648' ],
+  category_id: '848776,848648',
+  start_date: '2026-10-02',
+  end_date: '2026-10-31',
+  follower_gender: '2',
+  follower_ages: [ '18-24', '25-34' ],
+  creator_type: 'INDEPENDENT',
+  followers: '10000-1000000',
+  page_size: 50,
+  pages: 1,
+  top: 1000,
+  products_per_creator: 50,
+  videos_per_creator: 30,
+  mode: 'fill'
+}
+fill mode: 537 creators in top1000 still missing detail
+  koc 10/537 {}
+  koc 20/537 {}
+  koc 30/537 {}
+  koc 40/537 {}
+  pacing: 240/h reached, waiting 5 min…
+  koc 50/537 {}
+  koc 60/537 {}
+  koc 70/537 {}
+  koc 80/537 {}
+  pacing: 240/h reached, waiting 5 min…
+  koc 90/537 {}
+  koc 100/537 {}
+  koc 110/537 {}
+  pacing: 240/h reached, waiting 5 min…
+  koc 120/537 {}
+  koc 130/537 {}
+  koc 140/537 {}
+  koc 150/537 {}
+  pacing: daily cap 2000 reached at 23:23:17 3/11/2026, sleeping 30 min…
