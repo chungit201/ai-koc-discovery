@@ -1049,8 +1049,10 @@ function ToolTableView({ table, handle, compact: small }: { table: ToolTable; ha
                   <p className="mt-1 text-[12.5px]">{s(v.summary)}</p>
                 </div>
               </div>
-              {/* Chính 4 khung hình AI đã nhìn — bằng chứng gốc của nhận định bên trên */}
-              {!small && (
+              {/* Chính 4 khung hình AI đã nhìn — bằng chứng gốc của nhận định bên trên. Với bằng chứng
+                  của chiến dịch thì hiện cả ở thẻ gọn: đây là thứ người bán cần thấy nhất để tin
+                  nhận định "KOC này có demo đúng sản phẩm". */}
+              {(!small || table.tool === "campaign_videos") && (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={`/api/frames/${s(v.video_id)}`} alt="4 khung hình AI đã xem" className="mt-2 w-full rounded-md border border-line" loading="lazy" />
               )}

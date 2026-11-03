@@ -49,6 +49,14 @@ File chính: `lib/tola-deep.ts`, `app/api/tola/ask/route.ts`, `lib/chat-creator-
   một câu mới, route sẽ nhận ra là brief và chạy phân tích sâu từ đầu. `tola_chats.campaign_id` giờ
   được lưu cả khi chiến dịch sinh ra từ phân tích sâu, nên các lượt sau vẫn sửa được.
 
+- **Dẫn chứng video hiện ra chỗ người bán thấy**: bước "Xem khung hình video" mang theo
+  `payload.table` = `campaign_videos` (mọi video AI đã xem trong chiến dịch, kèm tên + handle KOC),
+  giao diện vẽ chính tấm 4 khung hình `/api/frames/<video_id>` + ghi chú từng khung. `campaign_context`
+  cũng kể phần "AI ĐÃ XEM" của từng người và prompt BẮT BUỘC có một mục về chất lượng review.
+  Tóm tắt công cụ phải gọn: dài quá thì Claude CLI không đưa vào ngữ cảnh mà đổ ra file (dấu hiệu:
+  thẻ bước ghi "Format: Plain text") — `toText` trong `scripts/koc-mcp.ts` có trần 24k ký tự, cắt
+  hàng chi tiết trước, giữ tóm tắt và `numbers`.
+
 ## Việc tiếp theo
 
 1. Ẩn sidebar của app ở `/tola` — desktop đang có hai cột trái.

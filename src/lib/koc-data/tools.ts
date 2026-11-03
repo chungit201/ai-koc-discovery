@@ -835,7 +835,7 @@ export async function campaignVideoRows(campaignId: string, opts: { pickedOnly?:
         creator_id: id,
         creator_name: String(c?.nickname || c?.handle || id),
         handle: String(c?.handle ?? "").replace(/^@/, ""),
-        picked: picked.has(id),
+        ...(picked.size ? { picked: picked.has(id) } : {}),
         video_id: String(v.video_id),
         title: String(v.title ?? ""),
         times: (v.times as number[]) ?? [],
@@ -882,6 +882,10 @@ async function campaignContext({ campaignId }: ToolCtx): Promise<Out> {
     if (fr !== undefined) numbers[`k${i + 1}_focus_revenue`] = fr;
     if (r.breakout_rate !== null) numbers[`k${i + 1}_breakout_rate`] = r.breakout_rate;
     if (r.budget) numbers[`k${i + 1}_budget`] = r.budget;
+    // Khoảng chi phí/video: agent trích suốt ("₫1,2-3,6 tr/video") nên phải có nguồn, không thì bị
+    // đánh dấu là số không đối chiếu được
+    numbers[`k${i + 1}_cost_min`] = r.cost_min;
+    numbers[`k${i + 1}_cost_max`] = r.cost_max;
     for (const [k, v] of Object.entries(r.scores)) numbers[`k${i + 1}_${k}`] = num(v);
     // Số của phần xem video cũng phải vào `numbers`, nếu không câu "demo 85/100" sẽ bị đánh là bịa
     r.videos.forEach((v, j) => {
