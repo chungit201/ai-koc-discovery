@@ -3,6 +3,8 @@ import { getDb } from "@/lib/db/mongo";
 import { C } from "@/lib/db/collections";
 import { askTola } from "@/lib/chat-creator-agent";
 import { mentionContext, resolveMentions } from "@/lib/mentions";
+import { pendingTolaCampaigns } from "@/lib/campaign-create";
+import { runPipeline } from "@/lib/pipeline/run";
 import type { ChatMessage } from "@/lib/chat";
 import type { AskEvent, StepKind, StepPayload } from "@/lib/chat-events";
 
@@ -79,6 +81,17 @@ export async function POST(req: Request) {
         );
       } catch (err) {
         console.error("[tola] lưu hội thoại lỗi", err);
+      }
+
+      /**
+       * Trợ lý vừa tạo chiến dịch thì KHỞI ĐỘNG PIPELINE ở đây — tiến trình MCP (nơi công cụ chạy)
+       * chết ngay sau lượt hỏi nên `void runPipeline()` bên đó sẽ bị giết giữa chừng. Tiến trình
+       * Next sống đủ lâu; `runPipeline` tự có lease nên gọi trùng cũng vô hại.
+       */
+      try {
+        for (const id of await pendingTolaCampaigns()) void runPipeline(id);
+      } catch (err) {
+        console.error("[tola] không khởi động được pipeline", err);
       }
       controller.close();
     },

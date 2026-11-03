@@ -49,9 +49,15 @@ const INTRO_TOLA = `[${AGENT_PROMPT_VERSION}-tola] Bạn là Tola — trợ lý 
 Nguồn 1 (chính): công cụ mcp__koc__* — dữ liệu Kalodata đã thu thập vào DB, kỳ 30 ngày.
 Nguồn 2 (phụ): WebSearch / WebFetch — CHỈ khi câu hỏi nằm ngoài dữ liệu Kalodata (đời tư công khai, tiểu sử, thương hiệu riêng, tin tức, phốt…).
 
+BRIEF TUYỂN KOC → create_campaign, KHÔNG tự trả lời
+Người bán đưa ra một yêu cầu tuyển KOC thật sự — nêu SẢN PHẨM cần quảng bá, kèm một trong các thứ: số KOC cần, ngân sách, khán giả mục tiêu, yêu cầu về chất lượng nội dung/review — thì BẮT BUỘC gọi create_campaign với nguyên văn yêu cầu đó.
+Vì sao: pipeline chấm hơn nghìn KOC trên 7 tiêu chí có trọng số và sinh vài nghìn bằng chứng (0 token), rồi AI đọc bio/sản phẩm/tiêu đề video của nhóm dẫn đầu, XEM KHUNG HÌNH VIDEO để kiểm chứng cách demo sản phẩm, và chia ngân sách kèm lý do có dẫn chứng. Một lần search_creators chỉ lọc theo số liệu có sẵn — trả lời brief kiểu đó là bỏ phí toàn bộ phần phân tích sâu, và người bán nhận được câu trả lời kém hẳn.
+Sau khi gọi: báo đang chạy, nói rõ các bước, chỉ họ mở trang chiến dịch. ĐỪNG tự liệt kê KOC trong câu trả lời đó.
+Ngược lại, câu hỏi TRA CỨU thuần ("KOC nào doanh thu cao nhất", "ai đang tăng trưởng mạnh", "so A với B") thì dùng search_creators và trả lời thẳng — không tạo chiến dịch.
+
 BẮT ĐẦU TỪ ĐÂU
 - Câu hỏi có nhắc tên/handle KOC → phần ngữ cảnh bên dưới đã ghi sẵn creator_id, dùng thẳng.
-- Hỏi TÌM KOC mới ("tìm 5 KOC bán kem chống nắng", "ai đang tăng trưởng mạnh nhất") → search_creators.
+- Hỏi TRA CỨU, xếp hạng, so sánh → search_creators.
 - Hỏi về một chiến dịch mà chưa có id → list_campaigns trước, rồi campaign_context.
 - Đang trong một chiến dịch cụ thể → campaign_context ĐẦU TIÊN.
 - KOC nào "CHƯA có dữ liệu chi tiết" thì các công cụ đọc sâu sẽ trống: nói thẳng, đừng hứa phân tích.
@@ -314,6 +320,8 @@ export async function* askTola(opts: {
     system: INTRO_TOLA + RULES,
     prompt: [opts.context ?? "", h ? `Hội thoại trước đó:\n${h}` : "", `Câu hỏi của người bán: ${opts.text}`],
     env: {
+      // Chỉ lượt Tola mới được tạo chiến dịch — xem WRITE_TOOLS trong scripts/koc-mcp.ts
+      KOC_CAN_CREATE: "1",
       ...(opts.mentioned?.length ? { KOC_CREATORS: opts.mentioned.map((m) => m.creator_id).join(",") } : {}),
       ...(opts.campaignId ? { KOC_CAMPAIGN: opts.campaignId } : {}),
     },
