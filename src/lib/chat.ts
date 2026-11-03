@@ -5,7 +5,8 @@ import { claude } from "./llm/claude";
 import { sanitizeExtracted, type Criteria } from "./brief";
 import { CAPABILITIES, defaultPlan, sanitizePlan, type BriefPlan, type Capability } from "./plan";
 import { validateReasons, type Reason } from "./evidence/validate";
-import type { AnswerBlock, ReportData } from "./chat-events";
+import type { AnswerBlock, AskEvent, ReportData, StepPayload } from "./chat-events";
+import { agentEnabled, analyseCampaignAgent } from "./chat-creator-agent";
 import { DEEPEN_TOO_MANY, NO_AUDIO, asksAboutVoice, limitDeepen, limitExclude, wantsBulk } from "./chat-rules";
 
 /**
@@ -21,7 +22,8 @@ export const CHAT_PROMPT_VERSION = "chat-v3";
 /** Số lượt gần nhất đưa vào ngữ cảnh — đủ để hiểu "em xem đi" nói về KOC nào. */
 const HISTORY_TURNS = 8;
 
-export type Intent = "refine_criteria" | "exclude_koc" | "deepen" | "explain" | "out_of_scope";
+export type Intent = "refine_criteria" | "exclude_koc" | "deepen" | "explain" | "web_info" | "out_of_scope";
+const INTENTS: Intent[] = ["refine_criteria", "exclude_koc", "deepen", "explain", "web_info", "out_of_scope"];
 
 /** Đổi gì thì phải chạy lại từ đâu — bảng này nằm trong code, AI không được quyết. */
 const RERUN_FROM: Record<Intent, Capability | null> = {
@@ -29,6 +31,7 @@ const RERUN_FROM: Record<Intent, Capability | null> = {
   exclude_koc: "recommend", // chỉ đổi danh sách được chọn
   deepen: "analyse_videos", // xem thêm video rồi chọn lại
   explain: null, // không đổi dữ liệu
+  web_info: null, // hỏi thông tin ngoài dữ liệu — agent tìm web, không đổi chiến dịch
   out_of_scope: null,
 };
 
@@ -44,7 +47,9 @@ export interface ChatMessage {
   products?: { product_id: string; name: string; revenue: number; share: number }[];
   videos?: { video_id: string; title: string; views: number; times: number[]; summary: string; demo: string }[];
   /** Các bước phân tích đã chạy + nhóm KOC cùng tầm dùng để đối chuẩn (chat hồ sơ KOC). */
-  steps?: { title: string; detail: string; kind?: "data" | "peers" | "videos" | "conclusion" }[];
+  steps?: { title: string; detail: string; kind?: "data" | "peers" | "videos" | "conclusion"; payload?: StepPayload }[];
+  /** Trả lời bằng agent (docs/10-koc-agent.md): bước là các lần gọi công cụ, không có kế hoạch định sẵn. */
+  agent?: boolean;
   peers?: { creator_id: string; name: string; followers: number; revenue: number; engagement: number; analysed?: boolean }[];
   /** Bảng số liệu của báo cáo (code dựng từ DB). */
   report?: ReportData;
@@ -61,7 +66,9 @@ Dựa vào HỘI THOẠI TRƯỚC ĐÓ để hiểu câu nói tắt: "em xem đi
 Phân loại yêu cầu mới của người dùng và trả về DUY NHẤT 1 object JSON, không giải thích:
 {"intent": một trong "refine_criteria" (đổi tiêu chí: ngân sách, số KOC, follower, MCN, danh mục, sản phẩm),
    "exclude_koc" (bỏ/thay một hoặc vài KOC khỏi đề xuất), "deepen" (muốn xem kỹ video nhiều KOC hơn),
-   "explain" (hỏi vì sao, giải thích, so sánh — không đổi gì), "out_of_scope" (ngoài dữ liệu: ngành ngoài mỹ phẩm, nền tảng khác, việc hệ thống không làm được),
+   "explain" (hỏi vì sao, giải thích, so sánh, hỏi số liệu của KOC trong danh sách — không đổi gì),
+   "web_info" (HỎI THÔNG TIN nằm ngoài dữ liệu bán hàng về KOC/thương hiệu trong chiến dịch: phốt, tiểu sử, đời tư công khai, thương hiệu của ai, tin tức — trả lời được bằng tìm web),
+   "out_of_scope" (YÊU CẦU việc hệ thống không làm được: nền tảng khác Shopee/Lazada, ngành ngoài mỹ phẩm, đặt booking, nhắn tin cho KOC…),
  "criteria": chỉ khi intent="refine_criteria" — các trường thay đổi, dùng đúng schema tiêu chí (budget_total, budget_min_per_koc, budget_max_per_koc, koc_count, followers_min, followers_max, product_focus, category_id, mcn, audience_gender, audience_ages). Tiền theo VND. Không nhắc tới thì bỏ qua.
  "creator_ids": khi intent="exclude_koc" hoặc "deepen" — mảng id lấy TỪ DANH SÁCH KOC bên dưới, không bịa id mới. Người dùng đòi xem video "tất cả"/"toàn bộ" thì trả về mảng rỗng,
  "reply": 1-2 câu tiếng Việt trả lời người dùng, nói rõ bạn sắp làm gì. KHÔNG nêu con số nào không có trong dữ liệu được cung cấp.}`;
@@ -90,6 +97,11 @@ export interface ChatOutcome {
   reruns: Capability[];
   reasons: Reason[];
   cost_usd: number;
+  /** Trả lời bằng agent (explain / web_info): bố cục khối, các bước gọi công cụ, gợi ý hỏi tiếp. */
+  agent?: boolean;
+  blocks?: AnswerBlock[];
+  steps?: ChatMessage["steps"];
+  follow_ups?: string[];
 }
 
 /**
@@ -136,9 +148,7 @@ export async function handleTurn(campaignId: string, text: string, opts: { dryRu
 
   const res = await claude({ system: SYSTEM, prompt, model: "haiku", purpose: "chat-turn" });
   const out = parseObject(res.text);
-  const intent: Intent = (["refine_criteria", "exclude_koc", "deepen", "explain", "out_of_scope"] as Intent[]).includes(out.intent as Intent)
-    ? (out.intent as Intent)
-    : "explain";
+  const intent: Intent = INTENTS.includes(out.intent as Intent) ? (out.intent as Intent) : "explain";
   let reply = typeof out.reply === "string" ? out.reply.trim().slice(0, 400) : "";
   let cost = res.cost_usd;
   let reasons: Reason[] = [];
@@ -208,6 +218,17 @@ export async function handleTurn(campaignId: string, text: string, opts: { dryRu
     }
   }
 
+  /**
+   * Giải thích / so sánh / thông tin ngoài dữ liệu → agent có công cụ (docs/10-koc-agent.md, mục chiến
+   * dịch): đọc thêm dữ liệu thật của từng KOC, xem video, tìm web khi cần. Tắt cờ `KOC_AGENT` thì vẫn
+   * dùng `explain()` một lần gọi như cũ (web_info khi đó trả lời là ngoài phạm vi).
+   */
+  if ((intent === "explain" || intent === "web_info") && agentEnabled()) {
+    const out = await collectAgent(analyseCampaignAgent(campaignId, text, (camp.messages as ChatMessage[]) ?? [], rosterIds, nameOf));
+    return { intent, reruns: [], ...out, cost_usd: cost + out.cost_usd, reply: out.reply || reply };
+  }
+  if (intent === "web_info") reply = reply || "Câu này cần tìm thông tin ngoài dữ liệu Kalodata — tính năng này đang tắt.";
+
   if (intent === "explain") {
     const explained = await explain(campaignId, text);
     reply = explained.answer || reply;
@@ -276,6 +297,22 @@ async function campaignState(campaignId: string, c: Record<string, any>, nameOf:
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+/**
+ * Gom luồng sự kiện agent thành một tin nhắn (chat chiến dịch là server action, không stream): các
+ * bước kèm bảng của từng bước, khối trả lời, lý do có nguồn, gợi ý hỏi tiếp.
+ */
+async function collectAgent(events: AsyncGenerator<AskEvent>): Promise<{ reply: string; reasons: Reason[]; cost_usd: number; agent: true; blocks: AnswerBlock[]; steps: NonNullable<ChatMessage["steps"]>; follow_ups: string[] }> {
+  const out = { reply: "", reasons: [] as Reason[], cost_usd: 0, agent: true as const, blocks: [] as AnswerBlock[], steps: [] as NonNullable<ChatMessage["steps"]>, follow_ups: [] as string[] };
+  for await (const e of events) {
+    if (e.type === "step_add") out.steps.push({ title: e.title, detail: "", kind: e.kind });
+    else if (e.type === "step_done" && out.steps[e.index]) Object.assign(out.steps[e.index], { detail: e.detail, ...(e.payload ? { payload: e.payload } : {}) });
+    else if (e.type === "conclusion") Object.assign(out, { reply: e.text, reasons: e.reasons, blocks: e.blocks ?? [], follow_ups: e.follow_ups ?? [] });
+    else if (e.type === "done") out.cost_usd = e.cost_usd;
+    else if (e.type === "error") out.reply = e.message;
+  }
+  return out;
 }
 
 /** Trả lời câu hỏi bằng đúng bằng chứng đã có (0 lần chạy lại, 1 call Haiku). */

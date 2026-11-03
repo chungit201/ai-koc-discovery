@@ -26,8 +26,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
       // Gom dữ liệu để lưu lại sau khi luồng xong
       // `kind` lấy thẳng từ sự kiện `plan` — kế hoạch là động nên suy theo chỉ số sẽ sai
-      const steps: { title: string; detail: string; kind?: StepKind }[] = [];
+      const steps: { title: string; detail: string; kind?: StepKind; payload?: StepPayload }[] = [];
       const payload: StepPayload = {};
+      let agent = false;
       let reply = "";
       let reasons: Reason[] = [];
       let followUps: string[] = [];
@@ -36,10 +37,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       try {
         for await (const e of analyseCreatorStream(creatorId, text, threadId)) {
           send(e);
-          if (e.type === "plan") for (const s of e.steps) steps.push({ title: s.title, detail: "", kind: s.kind });
+          if (e.type === "plan") {
+            agent = Boolean(e.agent);
+            for (const s of e.steps) steps.push({ title: s.title, detail: "", kind: s.kind });
+          } else if (e.type === "step_add") steps.push({ title: e.title, detail: "", kind: e.kind });
           else if (e.type === "step_done") {
             if (steps[e.index]) steps[e.index].detail = e.detail;
-            Object.assign(payload, e.payload ?? {});
+            // Agent: mỗi bước một bảng riêng → lưu theo bước; luồng cũ vẫn gộp như trước
+            if (agent) {
+              if (steps[e.index] && e.payload) steps[e.index].payload = e.payload;
+            } else Object.assign(payload, e.payload ?? {});
           } else if (e.type === "conclusion") {
             reply = e.text;
             reasons = e.reasons;
@@ -65,7 +72,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               messages: {
                 $each: [
                   { id: randomUUID(), role: "user", text, created_at: now },
-                  { id: randomUUID(), role: "assistant", text: reply, reasons, steps, blocks, follow_ups: followUps, ...payload, created_at: now },
+                  { id: randomUUID(), role: "assistant", text: reply, reasons, steps, blocks, follow_ups: followUps, ...payload, ...(agent ? { agent: true } : {}), created_at: now },
                 ],
               },
             } as never,

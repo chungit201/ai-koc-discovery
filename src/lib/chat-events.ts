@@ -10,11 +10,22 @@ import type { Reason } from "./evidence/validate";
  *  - `closing`: câu mời hỏi tiếp, không được chứa con số.
  */
 export type AnswerBlock =
-  | { type: "para"; text: string; evidence_ids?: string[] }
+  | { type: "para"; text: string; evidence_ids?: string[]; web_urls?: string[] }
   | { type: "heading"; text: string }
-  | { type: "bullets"; items: { text: string; evidence_ids: string[] }[] }
+  | { type: "bullets"; items: { text: string; evidence_ids: string[]; web_urls?: string[] }[] }
   | { type: "data"; data: DataBlockId; title?: string }
+  /**
+   * Bảng dựng từ **hàng của một bằng chứng trong phiên agent** (docs/10-koc-agent.md): model chỉ trỏ
+   * `source` = evidence_id, code chép `rows` từ DB vào — model không viết được số nào ở đây.
+   */
+  | { type: "table"; title?: string; source: string; table: ToolTable }
   | { type: "closing"; text: string };
+
+/** Hàng kết quả của một công cụ agent (`koc-data/tools.ts`) — giao diện vẽ theo `tool`. */
+export interface ToolTable {
+  tool: string;
+  rows: Record<string, unknown>[];
+}
 
 /** Các bảng/dữ liệu code có thể dựng. Model chỉ được chèn khi bước tương ứng đã chạy. */
 export type DataBlockId = "overview" | "categories" | "top_products" | "peers" | "videos" | "top_videos";
@@ -40,6 +51,12 @@ export interface StepPayload {
   products?: { product_id: string; name: string; revenue: number; share: number }[];
   peers?: { creator_id: string; name: string; followers: number; revenue: number; engagement: number; analysed?: boolean }[];
   videos?: { video_id: string; title: string; views: number; times: number[]; summary: string; demo: string }[];
+  /** Chế độ agent: hàng kết quả của lần gọi công cụ ứng với bước này (thẻ như Kalopilot). */
+  table?: ToolTable;
+  /** Chế độ agent: bằng chứng của phiên do bước này sinh ra — chip nguồn trong câu trả lời trỏ về đây. */
+  evidence_id?: string;
+  /** Chế độ agent: kết quả tìm kiếm web (thông tin NGOÀI dữ liệu Kalodata) của bước này. */
+  web?: { title: string; url: string }[];
 }
 
 /** Loại của một bước — quyết định dẫn chứng nào hiển thị dưới bước đó. */
@@ -52,7 +69,9 @@ export type AskEvent =
    * (kế hoạch 3 bước `read_data → peers → answer` từng bị gán nhầm bước cuối thành "videos",
    * làm mất hẳn khối Kết luận).
    */
-  | { type: "plan"; steps: { title: string; kind: StepKind }[] }
+  | { type: "plan"; steps: { title: string; kind: StepKind }[]; /** Chế độ agent: kế hoạch không biết trước, bước thêm dần qua `step_add`. */ agent?: boolean }
+  /** Chế độ agent: thêm một bước (mỗi lần gọi công cụ) — chỉ số = số bước hiện có. */
+  | { type: "step_add"; title: string; kind: StepKind }
   /** Một bước bắt đầu chạy (hiện spinner). */
   | { type: "step_start"; index: number }
   /** Một bước xong: kết quả của riêng bước đó. */

@@ -62,3 +62,11 @@ mongodump --uri "mongodb://admin:<pw>@127.0.0.1:27017/?authSource=admin" --db de
   - ssh rớt → nối lại trong ~15s (đã test: kill ssh → tự nối lại).
 - Cài/cài lại: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\db-tunnel.ps1 -Install`
 - Log: `.cache\db-tunnel.log` · Kiểm tra: `Get-ScheduledTask DETOLA-db-tunnel`, `npm`-free ping: `node --env-file=.env.local scripts/db-ping.mjs`
+
+## MongoDB mở công khai — quyết định của user 2026-11-02
+- Theo yêu cầu user: `bindIp: 0.0.0.0`, UFW mở `27017/tcp` cho mọi IP (0.0.0.0/0) để máy khác kết nối trực tiếp, không cần SSH tunnel.
+- Vẫn bắt buộc đăng nhập (`security.authorization: enabled`); user `detola` chỉ có quyền trên DB `detola`.
+- Kết nối từ máy khác: thay `127.0.0.1:27117` bằng `66.42.50.32:27017` trong `MONGODB_URI` (cùng user/mật khẩu trong `.env.local`). Máy dev hiện tại vẫn dùng được tunnel.
+- Backup cấu hình cũ: `/etc/mongod.conf.bak-20261102`.
+- Rủi ro: cổng 27017 bị quét/brute-force liên tục; chưa có TLS (mật khẩu đi dạng không mã hoá). Nên: giới hạn IP (`ufw allow from <IP> to any port 27017`) hoặc bật TLS khi deploy.
+- Đóng lại: `sed -i 's/bindIp: 0.0.0.0/bindIp: 127.0.0.1/' /etc/mongod.conf && systemctl restart mongod && ufw delete allow 27017/tcp`

@@ -51,11 +51,21 @@ export async function scoreCampaign(campaignId: string) {
   const detailed = new Set((await db.collection(C.creators).find({ detail_updated_at: { $exists: true } }, { projection: { _id: 1 } }).toArray()).map((c) => String(c._id)));
   const listRows = await latestBy(db, { source: "web:creator/queryList", category_scope: { $in: [COSMETICS, crit.category_id] } }, (r) => (r.category_scope === crit.category_id ? 2 : 1));
   const totals = await latestBy(db, { source: "web:creator/detail/total", category_scope: "all" }, () => 1);
+  // Doanh thu kênh chính xác tới đồng (`creator/detail`) — cùng nguồn ưu tiên với koc-data/facts.ts,
+  // để điểm của chiến dịch và câu trả lời ở chat KOC nói cùng một con số
+  const exactTotals = await latestBy(db, { source: "creator/detail", category_scope: "all" }, () => 1);
+  const channelRevenueOf = (id: string): number => (exactTotals.get(id)?.revenue as number) || (totals.get(id)?.revenue as number) || 0;
+  /**
+   * Sản phẩm **gộp theo (KOC, product_id)** trước — `creator_products` có một dòng cho mỗi
+   * `(product_id, date_range)`, KOC crawl 2 lần sẽ bị cộng đôi doanh thu nếu không gộp (lỗi đã sửa ở
+   * `productFacts`, docs/10-koc-agent.md P1; ở đây chấm cả pool nên gộp ngay trong một aggregate).
+   */
   const products = await db
     .collection(C.creatorProducts)
     .aggregate<{ _id: string; items: { name: string; revenue: number; sales: number; product_id: string }[] }>([
-      { $lookup: { from: C.products, localField: "product_id", foreignField: "_id", as: "p" } },
-      { $group: { _id: "$creator_id", items: { $push: { name: { $first: "$p.name" }, revenue: "$revenue", sales: "$sales_volume", product_id: "$product_id" } } } },
+      { $group: { _id: { c: "$creator_id", p: "$product_id" }, revenue: { $max: "$revenue" }, sales: { $max: "$sales_volume" } } },
+      { $lookup: { from: C.products, localField: "_id.p", foreignField: "_id", as: "p" } },
+      { $group: { _id: "$_id.c", items: { $push: { name: { $first: "$p.name" }, revenue: "$revenue", sales: "$sales", product_id: "$_id.p" } } } },
     ])
     .toArray();
   const productsBy = new Map(products.map((p) => [p._id, p.items]));
@@ -122,7 +132,10 @@ export async function scoreCampaign(campaignId: string) {
     ids.push(
       ev("revenue", {
         type: "metric",
-        claim: `Doanh thu ${r.list.category_scope === crit.category_id ? "danh mục" : "mỹ phẩm"} 30 ngày ${vnd(r.list.revenue)} (top ${Math.max(1, Math.round((1 - pRev(r.list.revenue ?? 0)) * 100))}% nhóm đủ điều kiện)`,
+        // "cao hơn Y%" thay cho "top X%": "top 81%" nghe như tốt nhưng thực ra là thấp (đã gặp ở chat KOC)
+        claim: `Doanh thu ${r.list.category_scope === crit.category_id ? "danh mục" : "mỹ phẩm"} 30 ngày ${vnd(r.list.revenue)} (cao hơn ${Math.round(
+          pRev(r.list.revenue ?? 0) * 100,
+        )}% KOC đủ điều kiện)`,
         value: r.list.revenue ?? null,
         source: { collection: C.creatorMetrics, ref: String(r.list._id) },
         strength: pRev(r.list.revenue ?? 0) >= 0.7 ? "strong" : "medium",
@@ -159,11 +172,14 @@ export async function scoreCampaign(campaignId: string) {
       );
 
     // content fit: products + videos about the campaign focus, and how specialised the KOC is
-    const prodRevenue = prods.reduce((a, p) => a + (p.revenue ?? 0), 0);
+    // Mẫu số = doanh thu KÊNH (quy ước của koc-data/facts.ts); chưa có tổng kênh mới đành chia cho tổng sản phẩm
+    const channelRevenue = channelRevenueOf(id);
+    const prodRevenue = channelRevenue || prods.reduce((a, p) => a + (p.revenue ?? 0), 0);
+    const shareBase = channelRevenue ? "doanh thu kênh" : "doanh thu sản phẩm đã thu thập";
     const focusProds = prods.filter((p) => focus.test(p.name ?? ""));
     const focusProdRevenue = focusProds.reduce((a, p) => a + (p.revenue ?? 0), 0);
     const focusVideos = vids.filter((v) => focus.test(v.title ?? ""));
-    const specialisation = r.total?.revenue ? clamp01((r.list.revenue ?? 0) / r.total.revenue) : 0.5;
+    const specialisation = channelRevenue ? clamp01((r.list.revenue ?? 0) / channelRevenue) : 0.5;
     const content_fit = clamp01(
       0.3 * (prodRevenue ? focusProdRevenue / prodRevenue : 0) + // share of their sales
         0.25 * (focusProdRevenue > 0 ? pFocusRev(focusProdRevenue) : 0) + // absolute focus sales vs peers
@@ -175,7 +191,7 @@ export async function scoreCampaign(campaignId: string) {
       ids.push(
         ev("focus_products", {
           type: "product",
-          claim: `Đã bán ${focusProds.length} sản phẩm ${focusLabel}, doanh thu ${vnd(focusProdRevenue)} (${pct(prodRevenue ? focusProdRevenue / prodRevenue : 0, 0)} doanh thu sản phẩm); nổi bật: ${(top.name ?? "").slice(0, 70)}`,
+          claim: `Đã bán ${focusProds.length} sản phẩm ${focusLabel}, doanh thu ${vnd(focusProdRevenue)} (${pct(prodRevenue ? focusProdRevenue / prodRevenue : 0, 0)} ${shareBase}); nổi bật: ${(top.name ?? "").slice(0, 70)}`,
           value: focusProdRevenue,
           source: { collection: C.creatorProducts, ref: `${id}:${top.product_id}` },
           strength: focusProdRevenue / (prodRevenue || 1) >= 0.3 ? "strong" : "medium",
@@ -194,13 +210,13 @@ export async function scoreCampaign(campaignId: string) {
         }),
       );
     }
-    if (r.total?.revenue)
+    if (channelRevenue)
       ids.push(
         ev("specialisation", {
           type: "metric",
-          claim: `${pct(specialisation, 0)} doanh thu tổng đến từ mỹ phẩm (${vnd(r.list.revenue)} / ${vnd(r.total.revenue)})`,
+          claim: `${pct(specialisation, 0)} doanh thu kênh đến từ mỹ phẩm (${vnd(r.list.revenue)} / ${vnd(channelRevenue)})`,
           value: specialisation,
-          source: { collection: C.creatorMetrics, ref: String(r.total._id) },
+          source: { collection: C.creatorMetrics, ref: String(exactTotals.get(id)?._id ?? r.total?._id) },
           strength: specialisation >= 0.6 ? "strong" : "medium",
         }),
       );

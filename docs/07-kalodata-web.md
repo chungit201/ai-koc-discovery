@@ -79,3 +79,11 @@ Measured on 2026-11-01 (VN, sunscreen face `601602`, last 30 days): 15,360 creat
 ## Impact on the anti-hallucination rules
 
 `audience.gender_majority` / `audience.age_majority` now come from **Kalodata data**, not AI. They are still only the *majority bucket* (no distribution), so the report shows them as "Kalodata: đa số nữ, nhóm tuổi lớn nhất 25–34" and cites the raw response as evidence. AI estimation is only needed for finer detail (e.g. share within 18–30).
+
+## Chạy crawl dài ngày ổn định (2026-11-02)
+- Sự cố: crawl bù dữ liệu chạy dạng tiến trình ẩn, bị tắt ~02:51 ngày 02/11 cùng tunnel DB (gắn với phiên terminal). Không phải lỗi tài khoản.
+- Giờ chạy bằng Scheduled Task `DETOLA-crawl` (`scripts/crawl-web-daemon.ps1 -Fill -Install`): chạy khi đăng nhập, không phụ thuộc terminal; lỗi tạm (mạng/DB) → thử lại sau 10 phút.
+- **An toàn tài khoản:** crawler thoát mã 3 khi gặp cảnh báo/khóa → daemon ghi `.cache/crawl-halted` và KHÔNG chạy lại nữa cho tới khi người xoá file đó.
+- `-Fill` chỉ bù dữ liệu cho KOC đã có trong DB, không thêm KOC mới. Giới hạn 1.000 lượt/ngày tính từ `api_calls` nên không bị reset khi khởi động lại.
+- Theo dõi: `logs/crawl-web-*.log` (mới nhất), `Get-ScheduledTask DETOLA-crawl`. Dừng: `Stop-ScheduledTask DETOLA-crawl; Disable-ScheduledTask DETOLA-crawl`.
+- Trạng thái lúc bật lại: 125/1.012 KOC có dữ liệu chi tiết; ~125 KOC/ngày → ~7 ngày.

@@ -172,6 +172,18 @@ Thanh hỏi AI nổi ở đáy trang `/kocs/[id]`; gửi xong mở **overlay h�
 - [x] **Bộ test tự động** (`npm run test:koc`, [`07-test-plan.md`](07-test-plan.md) → kết quả [`08-test-koc-chat.md`](08-test-koc-chat.md)): 15 ca / 6 nhóm, chấm bằng tiêu chí máy kiểm được (mỗi ý phải trích `evidence_id`; phải trích **đúng nhóm bằng chứng** của câu hỏi; kế hoạch không được thừa/thiếu bước; câu hỏi hồ sơ không được kèm bảng bán hàng; không được viết số bằng chữ). Lần chạy đầu **14/15** — bắt được 2 lỗi ràng buộc kế hoạch mà thử tay không thấy: regex `SALES` khớp cả chữ "sản phẩm" trong *"demo sản phẩm"* (ép đọc chỉ số, bỏ xem video), và sau khi vá thì chữ "video" trong *"bao nhiêu một video"* lại ép chạy xem video thừa. Sau khi siết regex: **15/15**.
 - [x] **`ratioText()`**: chênh lệch ≥ 2× thì viết "gấp 9,9 lần" thay vì "cao hơn 10486%" — con số phần trăm kiểu đó đọc vô nghĩa với người dùng.
 
+### Step 10d — Hỏi KOC theo kiểu agent (Claude CLI + công cụ đọc DB) — chi tiết: [`10-koc-agent.md`](10-koc-agent.md) — ✅ XONG 2026-11-03 (người dùng test & nghiệm thu)
+- [x] P1 Một nguồn sự thật cho số liệu kênh (`koc-data/facts.ts`) — 2026-11-02, @phuongsena: doanh thu 34,5 tỉ / 23k đơn / live 95,8% / top 10 = 56% (Kalopilot: 34,51 tỉ / 23k / 95,8% / 53,7%)
+- [x] P2 Thư viện 7 công cụ đọc DB + evidence theo phiên (`src/lib/koc-data/tools.ts`, `npm run koc:tool`) — xong 2026-11-03
+- [x] P3 MCP server stdio `scripts/koc-mcp.ts`
+- [x] P4 Chế độ agent trong `llm/claude.ts` (stream tool_use/tool_result)
+- [x] P5c Câu hỏi ngoài dữ liệu (đời tư, tiểu sử…) → agent tìm web, ghi rõ nguồn ngoài Kalodata, kiểm link — xong 2026-11-03
+- [x] P5b Agent xem video (`analyze_videos`) + chip nguồn dưới từng câu + mục "Căn cứ đi đến kết luận" — xong 2026-11-03
+- [x] P5 `chat-creator` chạy agent (cờ `KOC_AGENT=1`), khối `table`, thẻ công cụ trên giao diện
+- [x] P5d Hiển thị câu trả lời kiểu ChatGPT (chảy chữ liên tục, bám đáy, đổi sang bản lưu không nháy) + sửa nút "Cuộc trò chuyện mới" — xong 2026-11-03
+- [x] P7 Chiến dịch dùng logic agent: S2 sửa cộng trùng (17/292 KOC) + tỉ trọng theo doanh thu kênh; chat chiến dịch `explain` → agent đọc nhiều KOC + `campaign_context`; ý định mới `web_info` → tìm web — xong 2026-11-03, chờ test
+- [ ] (việc sau, không chặn) P6 benchmark chính thức: `npm run test:koc` cho luồng agent + ghi thời gian/chi phí vào `05-benchmark.md`, rồi bật cache câu trả lời. Đối chiếu số với Kalopilot đã làm tay trong P2/P5 (khớp: 34,5 tỉ, 23k đơn, live 95,8%, GPM 13,2 tr, chốt 0,92%).
+
 ### Step 10 — Bàn giao
 - [ ] Hoàn thiện README (chạy, giới hạn, hướng mở rộng), sơ đồ kiến trúc, quay video demo.
 

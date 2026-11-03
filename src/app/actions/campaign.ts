@@ -184,6 +184,8 @@ export async function sendMessage(formData: FormData): Promise<void> {
           intent: outcome.intent,
           reruns: outcome.reruns,
           reasons: outcome.reasons,
+          // Trả lời bằng agent: bố cục khối + các bước gọi công cụ (kèm bảng) + gợi ý hỏi tiếp
+          ...(outcome.agent ? { agent: true, blocks: outcome.blocks, steps: outcome.steps, follow_ups: outcome.follow_ups } : {}),
           created_at: new Date(),
         },
       } as never,

@@ -66,7 +66,7 @@ function repairQuotes(s: string): string {
  * viết kèm văn xuôi có dấu ngoặc nhọn — đã gặp một lần model trả 8.658 token và câu trả lời thành
  * rỗng. Ở đây duyệt từng vị trí `{`, cân bằng ngoặc để lấy đúng một object, thử parse tới khi được.
  */
-const parseObject = (text: string): Record<string, unknown> => {
+export const parseObject = (text: string): Record<string, unknown> => {
   for (let i = text.indexOf("{"); i >= 0; i = text.indexOf("{", i + 1)) {
     let depth = 0;
     let inStr = false;
@@ -224,8 +224,8 @@ const EVIDENCE_TOPICS: { re: RegExp; keys: string[] }[] = [
   { re: /lượt xem|view|độ phủ|reach/i, keys: ["views", "engagement"] },
   { re: /so (với|sánh)|cùng tầm|cùng quy mô|đối chuẩn|xếp hạng|hơn ai|thứ mấy|mặt bằng/i, keys: ["peer_revenue", "peer_engagement", "peer_live", "peer_top"] },
   { re: VIDEO_LIST_Q, keys: ["top_videos", "videos", "engagement"] },
-  { re: /bán hàng|doanh thu|doanh số|hiệu suất|bán được|gmv|chuyển đổi|live/i, keys: ["revenue", "sales", "orders", "live_conversion", "channel_mix"] },
-  { re: /danh mục|mặt hàng|bán gì|bán chạy|sản phẩm/i, keys: ["category_mix", "subcategory_mix", "products", "brand_focus", "price_range", "orders"] },
+  { re: /bán hàng|doanh thu|doanh số|hiệu suất|bán được|gmv|chuyển đổi|live/i, keys: ["channel_total", "revenue", "sales", "orders", "live_conversion", "channel_mix"] },
+  { re: /danh mục|mặt hàng|bán gì|bán chạy|sản phẩm/i, keys: ["category_l1_mix", "category_mix", "subcategory_mix", "products", "product_coverage", "brand_focus", "price_range", "channel_mix"] },
   // Giá SẢN PHẨM KOC bán, khác hẳn chi phí thuê KOC (`cost`) bên dưới
   { re: /tầm giá|khoảng giá|đơn giá|giá sản phẩm|giá bán|hàng (cao cấp|bình dân)|combo/i, keys: ["price_range", "orders", "products"] },
   { re: /bao nhiêu đơn|số đơn|đơn hàng|lượng bán/i, keys: ["orders", "sales", "products"] },
@@ -248,7 +248,7 @@ function focusEvidenceIds(question: string, ev: Map<string, string>): string[] {
     const key = id.replace(/^ev_koc_\d+_/, "");
     if (key.startsWith("video_") ? /nội dung|review|demo|video|clip|hình ảnh|lên hình/i.test(question) : wanted.has(key)) ids.push(id);
   }
-  return ids.slice(0, 8);
+  return ids.slice(0, 10);
 }
 
 export interface Highlights {
@@ -269,7 +269,7 @@ export interface Highlights {
  * model quên gắn id là chuyện thường xuyên, và hậu quả trước đây là xoá sạch nội dung, chỉ còn câu
  * dẫn trống rỗng.
  */
-function autoCite(text: string, ev: Map<string, string>, focus: string[] = []): string[] {
+export function autoCite(text: string, ev: Map<string, string>, focus: string[] = []): string[] {
   const nums = (text.match(/\d+(?:[.,]\d+)*/g) ?? []).map((n) => n.replace(/[.,]/g, ""));
   if (!nums.length) return [];
   const ids: string[] = [];
@@ -534,6 +534,13 @@ export async function* analyseCreatorStream(creatorId: string, text: string, thr
     return;
   }
 
+  // Câu hỏi số liệu bán hàng/sản phẩm/video/đối chuẩn → agent có công cụ (bật bằng KOC_AGENT=1)
+  const agent = await import("./chat-creator-agent");
+  if (agent.useAgentFor(text)) {
+    yield* agent.analyseCreatorAgent(creatorId, text, threadId);
+    return;
+  }
+
   const db = await getDb();
   const creator = await db.collection(C.creators).findOne({ _id: creatorId as never });
   if (!creator) {
@@ -654,6 +661,7 @@ export async function handleCreatorTurn(creatorId: string, text: string, threadI
 
   for await (const e of analyseCreatorStream(creatorId, text, threadId)) {
     if (e.type === "plan") for (const [i, s] of e.steps.entries()) steps.push({ title: s.title, detail: "", kind: KIND[i] });
+    else if (e.type === "step_add") steps.push({ title: e.title, detail: "", kind: e.kind });
     else if (e.type === "step_done") {
       if (steps[e.index]) steps[e.index].detail = e.detail;
       if (e.payload?.products) out.products = e.payload.products;

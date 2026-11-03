@@ -1,11 +1,11 @@
 "use client";
 
-import { ArrowUp, ArrowUpRight, CircleCheck, Expand, Loader2, MessageCircle, Plus, Sparkles, X } from "lucide-react";
+import { ArrowUp, ArrowUpRight, CircleCheck, Expand, Globe, Loader2, MessageCircle, Plus, Sparkles, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import type { ChatMessage } from "@/lib/chat";
-import type { AnswerBlock, AskEvent, ReportData, StepKind, StepPayload } from "@/lib/chat-events";
+import type { AnswerBlock, AskEvent, ReportData, StepKind, StepPayload, ToolTable } from "@/lib/chat-events";
 import { Avatar } from "@/components/avatar";
 import { ProductThumb } from "@/components/product-thumb";
 import { VideoThumb } from "@/components/video-thumb";
@@ -28,9 +28,17 @@ interface Live {
   steps: LiveStep[];
   conclusion?: { text: string; reasons: NonNullable<ChatMessage["reasons"]>; blocks?: AnswerBlock[]; follow_ups?: string[] };
   running: boolean;
+  /** Chế độ agent: bước thêm dần theo từng lần gọi công cụ, không có kế hoạch định sẵn để bày. */
+  agent?: boolean;
   /** Đã quá ngưỡng chờ → mới được phép bày kế hoạch ra (xem `PLAN_DELAY_MS`). */
   slow?: boolean;
   error?: string;
+  /** Cuộc trò chuyện của lượt này — chỉ hiện khi đang mở đúng cuộc đó. */
+  threadId: string;
+  /** Số tin nhắn đã lưu của cuộc này lúc gửi — để ẩn bản lưu của chính lượt này cho tới khi đổi chỗ. */
+  baseCount: number;
+  /** Câu trả lời đã chảy chữ xong → được phép thay bằng bản đã lưu. */
+  revealed?: boolean;
 }
 
 /**
@@ -48,7 +56,9 @@ function applyEvent(set: React.Dispatch<React.SetStateAction<Live | null>>, e: A
     if (!prev) return prev;
     switch (e.type) {
       case "plan":
-        return { ...prev, steps: e.steps.map((s) => ({ title: s.title, kind: s.kind, started: false, done: false })) };
+        return { ...prev, agent: Boolean(e.agent), steps: e.steps.map((s) => ({ title: s.title, kind: s.kind, started: false, done: false })) };
+      case "step_add":
+        return { ...prev, steps: [...prev.steps, { title: e.title, kind: e.kind, started: false, done: false }] };
       case "step_start": {
         const steps = [...prev.steps];
         if (steps[e.index]) steps[e.index] = { ...steps[e.index], started: true };
@@ -71,19 +81,46 @@ function applyEvent(set: React.Dispatch<React.SetStateAction<Live | null>>, e: A
   });
 }
 
-/** Chữ chạy dần như ChatGPT — chỉ dùng cho kết luận đang stream, không dùng cho tin nhắn đã lưu. */
-function Typewriter({ text, speed = 14 }: { text: string; speed?: number }) {
-  // Component được gắn `key={text}` ở nơi dùng nên mỗi câu mới là một instance mới → không cần reset state
-  const [n, setN] = useState(0);
+/**
+ * Chảy chữ kiểu ChatGPT: đếm số ký tự đã hiện, tăng đều theo `requestAnimationFrame` (mượt theo khung
+ * hình màn hình, không giật như `setInterval`). Tốc độ tối thiểu 120 ký tự/giây và tự tăng để bài dài
+ * cũng xong trong khoảng 6 giây — người đọc không phải ngồi chờ máy "gõ".
+ */
+function useReveal(total: number, active: boolean, onDone?: () => void): number {
+  const [n, setN] = useState(active ? 0 : total);
+  const done = useRef(onDone);
   useEffect(() => {
-    if (!text) return;
-    const id = setInterval(() => setN((v) => (v >= text.length ? (clearInterval(id), v) : v + 2)), speed);
-    return () => clearInterval(id);
-  }, [text, speed]);
+    done.current = onDone;
+  });
+  useEffect(() => {
+    if (!active) return;
+    const cps = Math.max(120, total / 6);
+    let shown = 0;
+    let last = performance.now();
+    let raf = 0;
+    const tick = (t: number) => {
+      shown = Math.min(total, shown + ((t - last) / 1000) * cps);
+      last = t;
+      setN(Math.floor(shown));
+      if (shown < total) raf = requestAnimationFrame(tick);
+      else done.current?.();
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [active, total]);
+  return active ? n : total;
+}
+
+/** Con trỏ nhấp nháy ở cuối phần chữ đang chảy. */
+const Caret = () => <span className="ml-0.5 inline-block h-[1em] w-[2px] translate-y-[2px] animate-pulse bg-brand align-middle" />;
+
+/** Chữ chạy dần — chỉ còn dùng cho khối "Kết luận" của luồng cũ (không có blocks). */
+function Typewriter({ text, onDone }: { text: string; onDone?: () => void }) {
+  const n = useReveal(text.length, true, onDone);
   return (
     <>
       {text.slice(0, n)}
-      {n < text.length && <span className="ml-0.5 inline-block h-[1em] w-[2px] translate-y-[2px] animate-pulse bg-brand align-middle" />}
+      {n < text.length && <Caret />}
     </>
   );
 }
@@ -125,10 +162,10 @@ export function AskBar({
   const active = threads.find((t) => t.id === activeId) ?? null;
   /** Lượt đang chạy: hiện dần theo luồng sự kiện từ server. */
   const [live, setLive] = useState<Live | null>(null);
-  /** Bản mới nhất của `live` để đọc trong callback bất đồng bộ (state trong closure đã cũ). */
-  const liveRef = useRef<Live | null>(null);
-  liveRef.current = live;
-  const endRef = useRef<HTMLDivElement>(null);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  /** Người dùng đang ở (gần) cuối khung → nội dung mới thì bám theo; cuộn lên đọc thì để yên. */
+  const stickRef = useRef(true);
 
   useEffect(() => {
     if (!open) return;
@@ -137,10 +174,33 @@ export function AskBar({
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
-  // Luôn cuộn tới phần mới nhất khi có thêm bước
+  /**
+   * Bám đáy kiểu ChatGPT: mỗi khi nội dung cao thêm (chữ chảy, thẻ mới, ảnh tải xong) thì nhảy
+   * **tức thì** xuống cuối — chỉ khi người dùng đang ở cuối. Bản cũ gọi `scrollIntoView smooth` mỗi
+   * lần đổi state, các lần cuộn mượt chồng lên nhau nên màn hình giật.
+   */
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [live?.steps.length, live?.conclusion, live?.running]);
+    const scroller = scrollerRef.current;
+    const content = contentRef.current;
+    if (!open || !scroller || !content) return;
+    const ro = new ResizeObserver(() => {
+      if (stickRef.current) scroller.scrollTop = scroller.scrollHeight;
+    });
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, [open, activeId]);
+
+  /**
+   * Đổi lượt đang chạy sang bản đã lưu **khi đã chảy chữ xong và bản lưu đã về** — lúc đó hai bản
+   * giống hệt nhau (bản lưu không có hiệu ứng) nên người dùng không thấy gì nhảy.
+   */
+  const savedCount = threads.find((t) => t.id === activeId)?.messages.length ?? 0;
+  const swapped = Boolean(live && !live.running && (live.revealed || live.error) && savedCount >= live.baseCount + 2);
+  /**
+   * Lượt đang chạy còn hiển thị không (tính lúc render, không cần effect để dọn state). Phải đúng cuộc
+   * đang mở: bấm "Cuộc trò chuyện mới" hay chuyển cuộc khác thì không được hiện lượt của cuộc cũ.
+   */
+  const cur = swapped || live?.threadId !== activeId ? null : live;
 
   const send = async (text: string, threadId: string | null) => {
     const trimmed = text.trim();
@@ -148,7 +208,8 @@ export function AskBar({
     const id = threadId ?? crypto.randomUUID();
     setActiveId(id);
     setOpen(true);
-    setLive({ question: trimmed, steps: [], running: true });
+    stickRef.current = true;
+    setLive({ question: trimmed, steps: [], running: true, threadId: id, baseCount: threads.find((t) => t.id === id)?.messages.length ?? 0 });
 
     /**
      * **Nhịp hiển thị do client quyết định.** Server có thể trả cả luồng trong chưa tới 1 giây (khi
@@ -174,7 +235,11 @@ export function AskBar({
         }
         if (e.type === "plan") {
           // Việc nặng: giữ nhịp chậm hơn và bật đồng hồ chờ để quyết có bày kế hoạch hay không
-          if (isHeavy(e.steps)) {
+          if (e.agent) {
+            // Agent: server vốn chậm (mỗi lượt vài giây) → chỉ cần nhịp ngắn để thẻ không nháy
+            SPIN_MS = 300;
+            REVEAL_MS = 120;
+          } else if (isHeavy(e.steps)) {
             SPIN_MS = 480;
             REVEAL_MS = 240;
             setTimeout(() => setLive((p) => (p?.running ? { ...p, slow: true } : p)), PLAN_DELAY_MS);
@@ -231,13 +296,12 @@ export function AskBar({
       setLive((p) => (p ? { ...p, running: false, error: "Mình gặp lỗi khi tra dữ liệu — bạn thử lại nhé." } : p));
       return;
     }
-    // Luồng xong: chờ chữ gõ xong rồi mới thay bằng bản đã lưu, nếu không sẽ bị nhảy giật
+    // Luồng xong: tải bản đã lưu ngay (bị ẩn bằng `baseCount`), đổi chỗ khi chữ đã chảy xong — xem effect ở trên
     router.refresh();
-    const typingMs = Math.min(2600, (liveRef.current?.conclusion?.text.length ?? 0) * 8);
-    setTimeout(() => setLive(null), typingMs + 500);
   };
 
-  const shown = (active?.messages ?? []) as Shown[];
+  // Trong lúc đang chạy, ẩn bản lưu của chính lượt này (refresh có thể về trước) để không hiện đôi
+  const shown = ((active?.messages ?? []) as Shown[]).slice(0, cur ? cur.baseCount : undefined);
 
   return (
     <>
@@ -299,18 +363,31 @@ export function AskBar({
                   </button>
                 </div>
 
-                <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-                  {live ? (
+                <div
+                  ref={scrollerRef}
+                  onScroll={(e) => {
+                    const el = e.currentTarget;
+                    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+                  }}
+                  className="min-h-0 flex-1 overflow-y-auto px-5 py-4 [overflow-anchor:none]"
+                >
+                  {/* Một khung cố định để ResizeObserver theo dõi, dù đang ở lượt chạy hay bản đã lưu */}
+                  <div ref={contentRef}>
+                  {cur ? (
                     <div className="mx-auto max-w-[820px] space-y-3">
                       {/* Các lượt trước trong cùng cuộc trò chuyện */}
                       {shown.map((m) => (
                         <Bubble key={m.id} m={m} handle={subjectHandle} onAsk={(q) => send(q, activeId)} />
                       ))}
                       <div className="flex justify-end">
-                        <div className="max-w-[80%] rounded-2xl bg-zinc-100 px-4 py-2.5 text-[14.5px] leading-relaxed">{live.question}</div>
+                        <div className="max-w-[80%] rounded-2xl bg-zinc-100 px-4 py-2.5 text-[14.5px] leading-relaxed">{cur.question}</div>
                       </div>
-                      <LiveAnswer live={live} handle={subjectHandle} onAsk={(q) => send(q, activeId)} />
-                      <div ref={endRef} />
+                      <LiveAnswer
+                        live={cur}
+                        handle={subjectHandle}
+                        onAsk={(q) => send(q, activeId)}
+                        onRevealed={() => setLive((p) => (p ? { ...p, revealed: true } : p))}
+                      />
                     </div>
                   ) : shown.length === 0 ? (
                     <Welcome subjectName={subjectName} suggestions={suggestions} onPick={(t) => send(t, null)} />
@@ -321,6 +398,7 @@ export function AskBar({
                       ))}
                     </div>
                   )}
+                  </div>
                 </div>
 
                 <div className="border-t border-line px-5 py-3.5">
@@ -346,7 +424,7 @@ function Bubble({ m, handle, onAsk }: { m: Shown; handle: string; onAsk: (q: str
       </div>
     );
   // Việc nhẹ: khi mở lại cũng chỉ hiện câu trả lời, không dựng lại quy trình cho có
-  if (m.steps?.length && !isHeavy(m.steps as { kind: StepKind }[]))
+  if (m.steps?.length && !m.agent && !isHeavy(m.steps as { kind: StepKind }[]))
     return (
       <div className="space-y-3">
         {m.blocks?.length ? (
@@ -363,10 +441,13 @@ function Bubble({ m, handle, onAsk }: { m: Shown; handle: string; onAsk: (q: str
       {m.steps && m.steps.length > 0 ? (
         // Kế hoạch ở trên, rồi tới từng bước kèm dẫn chứng của riêng nó, kết luận tách riêng
         <>
-          <PlanList titles={m.steps.map((s) => s.title)} />
+          {!m.agent && <PlanList titles={m.steps.map((s) => s.title)} />}
           {m.steps.map((s, i) => {
-            const items =
-              s.kind === "data" && m.products?.length ? (
+            const items = s.payload?.table ? (
+              <ToolTableView table={s.payload.table} handle={handle} compact />
+            ) : s.payload?.web?.length ? (
+              <WebLinks items={s.payload.web} />
+            ) : m.agent ? null : s.kind === "data" && m.products?.length ? (
                 <Products items={m.products} />
               ) : s.kind === "peers" && m.peers?.length ? (
                 <Peers items={m.peers} />
@@ -375,13 +456,18 @@ function Bubble({ m, handle, onAsk }: { m: Shown; handle: string; onAsk: (q: str
               ) : null;
             return (
               <div key={i} className="space-y-2">
-                <StepCard index={i} title={s.title} detail={s.detail} done>
+                <StepCard index={i} title={s.title} detail={s.detail} done anchor={`${m.id}-step-${i}`}>
                   {items ?? undefined}
                 </StepCard>
                 {s.kind === "conclusion" && (
                   <>
                     {m.blocks?.length ? (
-                      <Answer blocks={m.blocks} data={{ report: m.report, peers: m.peers, videos: m.videos }} handle={handle} />
+                      <Answer
+                        blocks={m.blocks}
+                        data={{ report: m.report, peers: m.peers, videos: m.videos }}
+                        handle={handle}
+                        sources={m.agent ? sourcesOf(m.steps ?? [], m.id) : undefined}
+                      />
                     ) : (
                       <Conclusion text={m.text} reasons={m.reasons ?? []} report={m.report} />
                     )}
@@ -413,16 +499,46 @@ function Bubble({ m, handle, onAsk }: { m: Shown; handle: string; onAsk: (q: str
 }
 
 /**
+ * Tin nhắn agent đã lưu, dùng lại ở **chat chiến dịch** (`chat-thread.tsx`): các thẻ gọi công cụ kèm
+ * bảng, rồi câu trả lời có chip nguồn và gợi ý hỏi tiếp — giống hệt chat KOC.
+ */
+export function AgentMessage({ m, handle = "", onAsk }: { m: ChatMessage; handle?: string; onAsk: (q: string) => void }) {
+  return (
+    <div className="space-y-2">
+      {/* Quá trình xử lý thu gọn (như Kalopilot); chip nguồn bấm vào sẽ tự mở và cuộn tới đúng thẻ */}
+      <details className="group rounded-xl border border-line bg-zinc-50/60 px-3 py-2">
+        <summary className="cursor-pointer select-none text-[12.5px] font-medium text-ink-muted">
+          Quá trình xử lý · {(m.steps ?? []).filter((s) => s.kind !== "conclusion").length} bước phân tích
+        </summary>
+        <div className="mt-2 space-y-2">
+          {(m.steps ?? []).map((s, i) =>
+            s.kind === "conclusion" ? null : (
+              <StepCard key={i} index={i} title={s.title} detail={s.detail} done anchor={`${m.id}-step-${i}`}>
+                {s.payload?.table ? <ToolTableView table={s.payload.table} handle={handle} compact /> : s.payload?.web?.length ? <WebLinks items={s.payload.web} /> : undefined}
+              </StepCard>
+            ),
+          )}
+        </div>
+      </details>
+      <div className="pt-1">
+        <Answer blocks={m.blocks ?? []} data={{}} handle={handle} sources={sourcesOf(m.steps ?? [], m.id)} />
+      </div>
+      {m.follow_ups && m.follow_ups.length > 0 && <FollowUps items={m.follow_ups} onAsk={onAsk} />}
+    </div>
+  );
+}
+
+/**
  * Khối tuyên bố kế hoạch — hiện NGAY khi AI đọc xong câu hỏi, trước khi chạy bất cứ bước nào, để
  * người dùng biết sắp làm gì. Tách khỏi phần thực thi bên dưới.
  */
-function PlanList({ titles }: { titles: string[] }) {
+function PlanList({ titles, animate }: { titles: string[]; animate?: boolean }) {
   return (
-    <div className="animate-rise space-y-2 text-[14.5px] leading-relaxed">
+    <div className={`${animate ? "animate-fade" : ""} space-y-2 text-[14.5px] leading-relaxed`}>
       <p>Tôi sẽ thực hiện theo kế hoạch sau:</p>
       <ol className="space-y-1.5">
         {titles.map((t, i) => (
-          <li key={i} className="animate-rise font-semibold" style={{ animationDelay: `${i * 90}ms` }}>
+          <li key={i} className="font-semibold">
             {i + 1}. {t}
           </li>
         ))}
@@ -437,15 +553,17 @@ function PlanList({ titles }: { titles: string[] }) {
  *   chỉ một dòng trạng thái rồi ra thẳng câu trả lời, giống người trả lời bình thường.
  * - Việc **nặng**: bày kế hoạch (chỉ khi đã chờ quá `PLAN_DELAY_MS`) + card từng bước như cũ.
  */
-function LiveAnswer({ live, handle, onAsk }: { live: Live; handle: string; onAsk: (q: string) => void }) {
-  const heavy = isHeavy(live.steps);
+function LiveAnswer({ live, handle, onAsk, onRevealed }: { live: Live; handle: string; onAsk: (q: string) => void; onRevealed: () => void }) {
+  const heavy = live.agent || isHeavy(live.steps);
   const current = live.steps.find((s) => s.started && !s.done);
+  // Gợi ý hỏi tiếp chỉ hiện khi câu trả lời đã chảy xong — như ChatGPT, không chen vào giữa
+  const followUps = live.revealed && live.conclusion?.follow_ups?.length ? <FollowUps items={live.conclusion.follow_ups} onAsk={onAsk} animate /> : null;
 
   if (!heavy && live.steps.length > 0)
     return (
       <div className="space-y-3">
         {live.running && (
-          <p className="animate-rise flex items-center gap-2 text-[14px] text-ink-muted">
+          <p className="animate-fade flex items-center gap-2 text-[14px] text-ink-muted">
             <Loader2 size={15} className="animate-spin text-brand" /> {current?.title ?? live.steps[live.steps.length - 1].title}…
           </p>
         )}
@@ -461,6 +579,7 @@ function LiveAnswer({ live, handle, onAsk }: { live: Live; handle: string; onAsk
                 }}
                 handle={handle}
                 typing
+                onRevealed={onRevealed}
               />
             ) : (
               <Conclusion
@@ -468,38 +587,40 @@ function LiveAnswer({ live, handle, onAsk }: { live: Live; handle: string; onAsk
                 reasons={live.conclusion.reasons}
                 report={live.steps.find((s) => s.payload?.report)?.payload?.report}
                 typing
+                onRevealed={onRevealed}
               />
             )}
-            {live.conclusion.follow_ups && live.conclusion.follow_ups.length > 0 && <FollowUps items={live.conclusion.follow_ups} onAsk={onAsk} />}
+            {followUps}
           </>
         )}
-        {live.error && <p className="animate-rise text-[13.5px] text-rose-600">{live.error}</p>}
+        {live.error && <p className="animate-fade text-[13.5px] text-rose-600">{live.error}</p>}
       </div>
     );
 
   return (
     <div className="space-y-3">
-      {live.steps.length === 0 ? (
+      {live.steps.length === 0 && (
         <p className="flex items-center gap-2 text-[14px] text-ink-muted">
           <Loader2 size={15} className="animate-spin text-brand" /> Đang đọc câu hỏi…
         </p>
-      ) : (
-        // Chỉ bày kế hoạch khi đã phải chờ đủ lâu — xong nhanh thì không cần khoe quy trình
-        live.slow && <PlanList titles={live.steps.map((s) => s.title)} />
       )}
+      {/* Chỉ bày kế hoạch khi đã phải chờ đủ lâu — xong nhanh thì không cần khoe quy trình */}
+      {live.steps.length > 0 && live.slow && !live.agent && <PlanList titles={live.steps.map((s) => s.title)} animate />}
       {live.steps.map((s, i) => {
         // Kết luận đứng thành khối riêng bên dưới card của bước, cho nổi hẳn
         const body = s.done ? (
           <>
+            {s.payload?.table ? <ToolTableView table={s.payload.table} handle={handle} compact /> : null}
+            {s.payload?.web?.length ? <WebLinks items={s.payload.web} /> : null}
             {s.payload?.products?.length ? <Products items={s.payload.products} /> : null}
             {s.payload?.peers?.length ? <Peers items={s.payload.peers} /> : null}
             {s.payload?.videos?.length ? <Videos items={s.payload.videos} handle={handle} /> : null}
           </>
         ) : null;
-        const hasBody = Boolean(s.payload?.products?.length || s.payload?.peers?.length || s.payload?.videos?.length);
+        const hasBody = Boolean(s.payload?.table || s.payload?.web?.length || s.payload?.products?.length || s.payload?.peers?.length || s.payload?.videos?.length);
         return (
           <div key={i} className="space-y-2">
-            <StepCard index={i} title={s.title} detail={s.detail} done={s.done} running={s.started && !s.done}>
+            <StepCard index={i} title={s.title} detail={s.detail} done={s.done} running={s.started && !s.done} anchor={`live-step-${i}`} animate>
               {hasBody ? body : undefined}
             </StepCard>
             {/* Luôn gõ chữ ở lượt đang chạy: `done` tới ngay sau `conclusion` nên nếu phụ thuộc
@@ -508,6 +629,7 @@ function LiveAnswer({ live, handle, onAsk }: { live: Live; handle: string; onAsk
               <>
                 {live.conclusion.blocks?.length ? (
                   <Answer
+                    sources={live.agent ? sourcesOf(live.steps, "live") : undefined}
                     blocks={live.conclusion.blocks}
                     data={{
                       report: live.steps.find((x) => x.payload?.report)?.payload?.report,
@@ -516,17 +638,25 @@ function LiveAnswer({ live, handle, onAsk }: { live: Live; handle: string; onAsk
                     }}
                     handle={handle}
                     typing
+                    onRevealed={onRevealed}
                   />
                 ) : (
-                  <Conclusion text={live.conclusion.text} reasons={live.conclusion.reasons} report={s.payload?.report} typing />
+                  <Conclusion text={live.conclusion.text} reasons={live.conclusion.reasons} report={s.payload?.report} typing onRevealed={onRevealed} />
                 )}
-                {live.conclusion.follow_ups && live.conclusion.follow_ups.length > 0 && <FollowUps items={live.conclusion.follow_ups} onAsk={onAsk} />}
+                {followUps}
               </>
             )}
           </div>
         );
       })}
-      {live.error && <p className="animate-rise text-[13.5px] text-rose-600">{live.error}</p>}
+      {/* Agent: một dòng trạng thái CỐ ĐỊNH ở cuối khi đang chờ lượt suy nghĩ tiếp theo (giữa hai lần gọi
+          công cụ). Bản cũ bật/tắt dòng này ở đầu danh sách nên cả khối nhảy lên xuống. */}
+      {live.agent && live.running && !current && live.steps.length > 0 && !live.conclusion && (
+        <p className="flex items-center gap-2 text-[13.5px] text-ink-muted">
+          <Loader2 size={14} className="animate-spin text-brand" /> Đang đọc kết quả, quyết định bước tiếp…
+        </p>
+      )}
+      {live.error && <p className="animate-fade text-[13.5px] text-rose-600">{live.error}</p>}
     </div>
   );
 }
@@ -541,6 +671,8 @@ function StepCard({
   detail,
   done,
   running,
+  anchor,
+  animate,
   children,
 }: {
   index: number;
@@ -548,11 +680,18 @@ function StepCard({
   detail?: string;
   done?: boolean;
   running?: boolean;
+  /** id DOM để chip nguồn trong câu trả lời cuộn tới thẻ này. */
+  anchor?: string;
+  /** Chỉ lượt đang chạy mới mờ dần vào; tin đã lưu hiện tĩnh để lúc đổi chỗ không nháy lại. */
+  animate?: boolean;
   children?: React.ReactNode;
 }) {
   const hasBody = Boolean(children);
   return (
-    <div className={`animate-rise overflow-hidden rounded-xl border ${done || running ? "border-line bg-white" : "border-dashed border-zinc-200 bg-white/60"}`}>
+    <div
+      id={anchor}
+      className={`${animate ? "animate-fade" : ""} scroll-mt-4 overflow-hidden rounded-xl border transition-shadow ${done || running ? "border-line bg-white" : "border-dashed border-zinc-200 bg-white/60"}`}
+    >
       <div className={`flex items-start gap-2 px-3.5 py-2.5 text-[13px] ${hasBody ? "border-b border-line bg-zinc-50/80" : ""}`}>
         <span className="mt-0.5 shrink-0">
           {running ? (
@@ -570,6 +709,88 @@ function StepCard({
       </div>
       {hasBody && <div className="px-3.5 py-3">{children}</div>}
     </div>
+  );
+}
+
+/** evidence_id → thẻ công cụ đã sinh ra nó (chế độ agent). */
+type Sources = Record<string, { anchor: string; index: number; title: string }>;
+
+/** Dựng bản đồ nguồn từ các bước: bước nào sinh evidence nào. */
+function sourcesOf(steps: { title: string; payload?: StepPayload }[], prefix: string): Sources {
+  const out: Sources = {};
+  steps.forEach((s, i) => {
+    if (s.payload?.evidence_id) out[s.payload.evidence_id] = { anchor: `${prefix}-step-${i}`, index: i, title: s.title };
+  });
+  return out;
+}
+
+/**
+ * Chip "nguồn" dưới mỗi câu: câu này dựa vào kết quả công cụ nào. Bấm → cuộn tới thẻ đó và nháy viền
+ * để người bán tự đối chiếu số trong câu với bảng gốc.
+ */
+function SourceChips({ ids, sources, urls }: { ids?: string[]; sources?: Sources; urls?: string[] }) {
+  const hits = (ids ?? []).map((id) => sources?.[id]).filter((s): s is Sources[string] => Boolean(s));
+  if (!hits.length && !urls?.length) return null;
+  const jump = (anchor: string) => {
+    const el = document.getElementById(anchor);
+    if (!el) return;
+    el.closest("details")?.setAttribute("open", ""); // thẻ nằm trong "Quá trình xử lý" đang thu gọn
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.classList.add("ring-2", "ring-brand");
+    setTimeout(() => el.classList.remove("ring-2", "ring-brand"), 1600);
+  };
+  return (
+    <span className="ml-1.5 inline-flex flex-wrap gap-1 align-middle">
+      {hits.map((s) => (
+        <button
+          key={s.anchor}
+          type="button"
+          onClick={() => jump(s.anchor)}
+          title={`Bằng chứng: bước ${s.index + 1} — ${s.title}`}
+          className="rounded-full border border-brand/30 bg-brand-soft/50 px-1.5 py-px text-[10.5px] font-medium leading-4 text-brand-strong hover:bg-brand-soft"
+        >
+          {s.index + 1}. {s.title.length > 26 ? `${s.title.slice(0, 25)}…` : s.title}
+        </button>
+      ))}
+      {/* Nguồn web: thông tin NGOÀI dữ liệu Kalodata — màu khác để không lẫn với số liệu đã kiểm */}
+      {(urls ?? []).map((u) => (
+        <a
+          key={u}
+          href={u}
+          target="_blank"
+          rel="noreferrer"
+          title={u}
+          className="inline-flex items-center gap-0.5 rounded-full border border-sky-200 bg-sky-50 px-1.5 py-px text-[10.5px] font-medium leading-4 text-sky-700 hover:bg-sky-100"
+        >
+          <Globe size={10} /> {domainOf(u)}
+        </a>
+      ))}
+    </span>
+  );
+}
+
+const domainOf = (u: string) => {
+  try {
+    return new URL(u).hostname.replace(/^www\./, "");
+  } catch {
+    return u.slice(0, 30);
+  }
+};
+
+/** Thẻ "Tìm kiếm trên web": các kết quả agent đã thấy. */
+function WebLinks({ items }: { items: { title: string; url: string }[] }) {
+  return (
+    <ul className="space-y-1">
+      {items.map((l) => (
+        <li key={l.url} className="flex min-w-0 items-center gap-2 text-[12.5px]">
+          <Globe size={12} className="shrink-0 text-sky-600" />
+          <a href={l.url} target="_blank" rel="noreferrer" className="min-w-0 truncate hover:text-brand hover:underline">
+            {l.title}
+          </a>
+          <span className="shrink-0 text-[11px] text-ink-muted">{domainOf(l.url)}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -666,76 +887,363 @@ function TopVideoTable({ data, handle }: { data: ReportData; handle: string }) {
   );
 }
 
+const SCORE_SHORT: Record<string, string> = {
+  performance: "hiệu suất",
+  content_fit: "hợp SP",
+  engagement: "tương tác",
+  cost_fit: "ngân sách",
+  consistency: "ổn định",
+  audience_fit: "khán giả",
+};
+
+/**
+ * Bảng từ hàng kết quả của một công cụ agent (`koc-data/tools.ts`) — số do code tính, vẽ theo loại
+ * công cụ. `compact` dùng trong thẻ của bước (ít cột, giới hạn chiều cao như thẻ Kalopilot).
+ */
+function ToolTableView({ table, handle, compact: small }: { table: ToolTable; handle: string; compact?: boolean }) {
+  const rows = table.rows as Record<string, never>[];
+  const s = (v: unknown) => String(v ?? "");
+  const n = (v: unknown) => (typeof v === "number" ? v : 0);
+  const share = (v: unknown) => `${(Math.round(n(v) * 1000) / 10).toLocaleString("vi-VN")}%`;
+  const frame = `overflow-hidden rounded-lg border border-line bg-white ${small ? "max-h-[280px] overflow-y-auto" : ""}`;
+
+  if (table.tool === "list_products")
+    return (
+      <div className={frame}>
+        <table className="w-full text-[12.5px]">
+          <tbody>
+            {rows.map((p) => (
+              <tr key={s(p.product_id)} className="border-t border-line first:border-t-0">
+                <td className="num w-8 px-3 py-2 text-ink-muted">{s(p.rank)}</td>
+                <td className="w-12 py-2 pl-1">
+                  <ProductThumb id={s(p.product_id)} name={s(p.name)} />
+                </td>
+                <td className="px-3 py-2">
+                  <span className="line-clamp-2">{s(p.name)}</span>
+                  {!small && <span className="text-[11.5px] text-ink-muted">{s(p.cat3) || s(p.cat2) || s(p.cat1)} · giá {vnd(n(p.price))}</span>}
+                </td>
+                <td className="num w-36 px-3 py-2 text-right">
+                  {vnd(n(p.revenue))} <span className="text-ink-muted">· {share(p.share)}</span>
+                  <div className="text-ink-muted">{compact(n(p.orders))} đơn</div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+
+  if (table.tool === "category_breakdown")
+    return (
+      <div className={frame}>
+        <table className="w-full text-[12.5px]">
+          <thead className="bg-zinc-50 text-left text-[11.5px] uppercase tracking-wide text-ink-muted">
+            <tr>
+              <th className="px-3 py-1.5 font-semibold">Danh mục</th>
+              {!small && <th className="px-3 py-1.5 font-semibold">Nhóm chính</th>}
+              <th className="px-3 py-1.5 text-right font-semibold">Doanh thu</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((c) => (
+              <tr key={s(c.name)} className="border-t border-line">
+                <td className="px-3 py-1.5 font-medium">
+                  {s(c.name)} <span className="font-normal text-ink-muted">· {s(c.products)} SP</span>
+                </td>
+                {!small && <td className="px-3 py-1.5 text-zinc-600">{((c.sub as unknown as string[]) ?? []).join(", ") || "—"}</td>}
+                <td className="num px-3 py-1.5 text-right">
+                  {vnd(n(c.revenue))} <span className="text-ink-muted">· {share(c.share)}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+
+  if (table.tool === "list_videos")
+    return (
+      <div className={`space-y-1.5 ${small ? "max-h-[280px] overflow-y-auto" : ""}`}>
+        {rows.map((v) => {
+          const product = ((v.products as unknown as { name: string }[]) ?? [])[0]?.name;
+          return (
+            <div key={s(v.video_id)} className="flex items-start gap-2.5 rounded-lg border border-line bg-white p-2">
+              <VideoThumb id={s(v.video_id)} title={s(v.title)} tiktokUrl={tiktokVideo(handle, s(v.video_id))} />
+              <div className="min-w-0 flex-1">
+                <p className="line-clamp-2 text-[12.5px]">{s(v.title)}</p>
+                <p className="num mt-1 text-[11.5px] text-ink-muted">
+                  {s(v.publish_date).slice(0, 10)} · {compact(n(v.views))} view · {compact(n(v.likes))} like · {vnd(n(v.revenue))} ({compact(n(v.orders))} đơn)
+                  {v.is_ad && (
+                    <span className="ml-1 rounded bg-amber-100 px-1 py-px text-[10.5px] text-amber-800">
+                      quảng cáo {vnd(n(v.ad_cost))} · ROAS {n(v.ad_roas).toLocaleString("vi-VN")}
+                    </span>
+                  )}
+                </p>
+                {product && !small && <p className="mt-0.5 truncate text-[11.5px] text-zinc-600">Gắn: {product}</p>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+
+  if (table.tool === "analyze_videos")
+    return (
+      <div className={`space-y-2 ${small ? "max-h-[360px] overflow-y-auto" : ""}`}>
+        {rows.map((v) => {
+          const frames = (v.frames as unknown as { i: number; note: string }[]) ?? [];
+          const risks = (v.risks as unknown as string[]) ?? [];
+          return (
+            <div key={s(v.video_id)} className="rounded-lg border border-line bg-white p-2.5">
+              <div className="flex items-start gap-2.5">
+                <VideoThumb id={s(v.video_id)} title={s(v.title)} tiktokUrl={tiktokVideo(handle, s(v.video_id))} />
+                <div className="min-w-0 flex-1">
+                  <p className="line-clamp-2 text-[12.5px] font-medium">{s(v.title)}</p>
+                  <p className="num mt-0.5 text-[11.5px] text-ink-muted">
+                    {compact(n(v.views))} view · {vnd(n(v.revenue))}
+                    {s(v.product) && <> · gắn {s(v.product).slice(0, 40)}</>}
+                  </p>
+                  <p className="mt-1 flex flex-wrap gap-1 text-[11px]">
+                    <span className={`rounded px-1.5 py-px ${v.product_demo === "có" ? "bg-emerald-50 text-emerald-700" : "bg-zinc-100 text-zinc-600"}`}>
+                      demo {s(v.product_demo)} · {s(v.demo_score)}/100
+                    </span>
+                    <span className="rounded bg-zinc-100 px-1.5 py-px text-zinc-600">hình ảnh {s(v.production_quality)}/100</span>
+                    <span className="rounded bg-zinc-100 px-1.5 py-px text-zinc-600">tự nhiên {s(v.authenticity)}/100</span>
+                  </p>
+                  <p className="mt-1 text-[12.5px]">{s(v.summary)}</p>
+                </div>
+              </div>
+              {/* Chính 4 khung hình AI đã nhìn — bằng chứng gốc của nhận định bên trên */}
+              {!small && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={`/api/frames/${s(v.video_id)}`} alt="4 khung hình AI đã xem" className="mt-2 w-full rounded-md border border-line" loading="lazy" />
+              )}
+              {frames.length > 0 && (
+                <ol className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11.5px] text-zinc-600 sm:grid-cols-4">
+                  {frames.map((f) => (
+                    <li key={f.i}>
+                      <b className="text-ink-muted">
+                        {f.i}
+                        {((v.times as unknown as number[]) ?? [])[f.i - 1] !== undefined ? ` · ${((v.times as unknown as number[]) ?? [])[f.i - 1]}s` : ""}
+                      </b>{" "}
+                      {f.note}
+                    </li>
+                  ))}
+                </ol>
+              )}
+              {risks.length > 0 && <p className="mt-1 text-[11.5px] text-amber-700">Lưu ý: {risks.join("; ")}</p>}
+            </div>
+          );
+        })}
+        <p className="text-[11px] text-ink-muted">AI chỉ nhìn 4 khung hình tĩnh, không nghe được âm thanh; điểm là nhận định của AI.</p>
+      </div>
+    );
+
+  if (table.tool === "campaign_context")
+    return (
+      <div className={frame}>
+        <table className="w-full text-[12.5px]">
+          <thead className="bg-zinc-50 text-left text-[11.5px] uppercase tracking-wide text-ink-muted">
+            <tr>
+              <th className="px-3 py-1.5 font-semibold">KOC</th>
+              <th className="px-3 py-1.5 text-right font-semibold">Điểm</th>
+              {!small && <th className="px-3 py-1.5 font-semibold">Điểm thành phần</th>}
+              <th className="px-3 py-1.5 text-right font-semibold">Ngân sách</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((k) => (
+              <tr key={s(k.creator_id)} className={`border-t border-line ${k.picked ? "" : "text-zinc-500"}`}>
+                <td className="px-3 py-1.5">
+                  <a href={`/kocs/${s(k.creator_id)}`} className="flex items-center gap-2 hover:text-brand">
+                    <Avatar id={s(k.creator_id)} name={s(k.name)} size={22} />
+                    <span className="truncate font-medium">{s(k.name)}</span>
+                    <span className="text-[11px] text-ink-muted">{k.picked ? "được chọn" : "dự phòng"}</span>
+                  </a>
+                </td>
+                <td className="num px-3 py-1.5 text-right font-semibold">{s(k.total)}</td>
+                {!small && (
+                  <td className="px-3 py-1.5 text-[11.5px] text-zinc-600">
+                    {Object.entries((k.scores as unknown as Record<string, number>) ?? {})
+                      .map(([key, v]) => `${SCORE_SHORT[key] ?? key} ${v}`)
+                      .join(" · ")}
+                  </td>
+                )}
+                <td className="num px-3 py-1.5 text-right">{n(k.budget) ? vnd(n(k.budget)) : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+
+  if (table.tool === "get_peers")
+    return (
+      <div className={frame}>
+        <table className="w-full text-[12.5px]">
+          <tbody>
+            {rows.map((p) => (
+              <tr key={s(p.creator_id)} className={`border-t border-line first:border-t-0 ${p.self ? "bg-brand-soft/40 font-semibold" : ""}`}>
+                <td className="num w-8 px-3 py-1.5 text-ink-muted">{s(p.rank)}</td>
+                <td className="px-2 py-1.5">
+                  <a href={`/kocs/${s(p.creator_id)}`} className="flex items-center gap-2 hover:text-brand">
+                    <Avatar id={s(p.creator_id)} name={s(p.name)} size={22} />
+                    <span className="truncate">{s(p.name)}</span>
+                    {p.self && <span className="text-[11px] font-normal text-brand">(KOC này)</span>}
+                  </a>
+                </td>
+                <td className="num px-3 py-1.5 text-right text-ink-muted">{compact(n(p.followers))} fl</td>
+                <td className="num px-3 py-1.5 text-right">{vnd(n(p.revenue))}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+
+  return null;
+}
+
 function Answer({
   blocks,
   data,
   handle,
   typing,
+  sources,
+  onRevealed,
 }: {
   blocks: AnswerBlock[];
   data: { report?: ReportData; peers?: ChatMessage["peers"]; videos?: ChatMessage["videos"]; products?: ChatMessage["products"] };
   handle: string;
   typing?: boolean;
+  /** Chế độ agent: evidence_id → thẻ công cụ, để gắn chip nguồn dưới từng câu. */
+  sources?: Sources;
+  /** Gọi một lần khi đã chảy hết chữ. */
+  onRevealed?: () => void;
+}) {
+  /**
+   * Chảy chữ **liên tục qua mọi khối** theo thứ tự đọc, như ChatGPT: hết đoạn này mới tới đoạn sau,
+   * bảng chỉ hiện (mờ dần) khi dòng chữ chảy tới chỗ của nó. Bản cũ chỉ gõ đoạn đầu còn mọi khối khác
+   * cùng nhích lên một lúc nên cả bài giật. Mỗi khối "tốn" bằng độ dài chữ; bảng tốn cố định
+   * `TABLE_COST` để tạo một nhịp dừng ngắn.
+   */
+  const TABLE_COST = 60;
+  const cost = (b: AnswerBlock) =>
+    b.type === "bullets" ? b.items.reduce((a, it) => a + it.text.length, 0) : b.type === "table" || b.type === "data" ? TABLE_COST : b.text.length;
+  const total = blocks.reduce((a, b) => a + cost(b), 0);
+  const n = useReveal(total, Boolean(typing), onRevealed);
+  const streaming = Boolean(typing) && n < total;
+
+  let budget = n;
+  const out: React.ReactNode[] = [];
+  for (const [i, b] of blocks.entries()) {
+    if (budget <= 0 && streaming) break;
+    const c = cost(b);
+    const part = streaming ? Math.min(c, budget) : c;
+    const partial = part < c; // khối đang chảy dở → con trỏ ở cuối, chưa hiện chip nguồn
+    budget -= c;
+    const text = (s: string) => (partial ? s.slice(0, part) : s);
+
+    if (b.type === "heading") out.push(<h3 key={i} className="pt-1 text-[16px] font-bold tracking-tight">{text(b.text)}</h3>);
+    else if (b.type === "para")
+      out.push(
+        <p key={i}>
+          {text(b.text)}
+          {partial ? <Caret /> : <SourceChips ids={b.evidence_ids} sources={sources} urls={b.web_urls} />}
+        </p>,
+      );
+    else if (b.type === "bullets") {
+      // Chảy lần lượt từng ý trong danh sách
+      let left = part;
+      const items: React.ReactNode[] = [];
+      for (const [k, it] of b.items.entries()) {
+        if (left <= 0) break;
+        const shown = Math.min(it.text.length, left);
+        left -= it.text.length;
+        const cut = shown < it.text.length;
+        items.push(
+          <li key={k} className="flex gap-2 text-[14px]">
+            <CircleCheck size={15} className="mt-1 shrink-0 text-brand" />
+            <span>
+              {cut ? it.text.slice(0, shown) : it.text}
+              {cut ? <Caret /> : <SourceChips ids={it.evidence_ids} sources={sources} urls={it.web_urls} />}
+            </span>
+          </li>,
+        );
+      }
+      out.push(
+        <ul key={i} className="space-y-1.5">
+          {items}
+        </ul>,
+      );
+    } else if (b.type === "closing")
+      out.push(
+        <p key={i} className="text-ink-muted">
+          {text(b.text)}
+          {partial && <Caret />}
+        </p>,
+      );
+    else if (partial) break; // bảng chỉ hiện khi dòng chữ đã tới hẳn chỗ của nó
+    else if (b.type === "table")
+      out.push(
+        <div key={i} className={typing ? "animate-fade" : ""}>
+          {b.title && <h4 className="mb-1.5 text-[13.5px] font-semibold">{b.title}</h4>}
+          <ToolTableView table={b.table} handle={handle} />
+        </div>,
+      );
+    else out.push(<DataBlock key={i} b={b} data={data} handle={handle} fade={Boolean(typing)} />);
+  }
+  return <div className="space-y-3 text-[14.5px] leading-relaxed">{out}</div>;
+}
+
+/** Khối dữ liệu của luồng cũ: số liệu do code dựng, model chỉ chọn chèn và đặt tiêu đề. */
+function DataBlock({
+  b,
+  data,
+  handle,
+  fade,
+}: {
+  b: Extract<AnswerBlock, { type: "data" }>;
+  data: { report?: ReportData; peers?: ChatMessage["peers"]; videos?: ChatMessage["videos"] };
+  handle: string;
+  fade: boolean;
 }) {
   return (
-    <div className="animate-rise space-y-3 text-[14.5px] leading-relaxed">
-      {blocks.map((b, i) => {
-        if (b.type === "heading")
-          return (
-            <h3 key={i} className="animate-rise pt-1 text-[16px] font-bold tracking-tight" style={{ animationDelay: `${i * 60}ms` }}>
-              {b.text}
-            </h3>
-          );
-        if (b.type === "para")
-          return (
-            <p key={i} className="animate-rise" style={{ animationDelay: `${i * 60}ms` }}>
-              {typing && i === 0 ? <Typewriter key={b.text} text={b.text} /> : b.text}
-            </p>
-          );
-        if (b.type === "bullets")
-          return (
-            <ul key={i} className="animate-rise space-y-1.5" style={{ animationDelay: `${i * 60}ms` }}>
-              {b.items.map((it, n) => (
-                <li key={n} className="flex gap-2 text-[14px]">
-                  <CircleCheck size={15} className="mt-1 shrink-0 text-brand" /> {it.text}
-                </li>
-              ))}
-            </ul>
-          );
-        if (b.type === "closing")
-          return (
-            <p key={i} className="animate-rise text-ink-muted" style={{ animationDelay: `${i * 60}ms` }}>
-              {b.text}
-            </p>
-          );
-        // Khối dữ liệu: số liệu do code dựng, model chỉ chọn chèn và đặt tiêu đề
-        return (
-          <div key={i} className="animate-rise" style={{ animationDelay: `${i * 60}ms` }}>
-            {b.title && <h4 className="mb-1.5 text-[13.5px] font-semibold">{b.title}</h4>}
-            {b.data === "overview" && data.report && <Overview data={data.report} />}
-            {b.data === "categories" && data.report && <CategoryTable data={data.report} />}
-            {b.data === "top_products" && data.report && <TopProductTable data={data.report} />}
-            {b.data === "peers" && data.peers?.length ? <Peers items={data.peers} /> : null}
-            {b.data === "videos" && data.videos?.length ? <Videos items={data.videos} handle={handle} /> : null}
-            {b.data === "top_videos" && data.report?.top_videos.length ? <TopVideoTable data={data.report} handle={handle} /> : null}
-          </div>
-        );
-      })}
+    <div className={fade ? "animate-fade" : ""}>
+      {b.title && <h4 className="mb-1.5 text-[13.5px] font-semibold">{b.title}</h4>}
+      {b.data === "overview" && data.report && <Overview data={data.report} />}
+      {b.data === "categories" && data.report && <CategoryTable data={data.report} />}
+      {b.data === "top_products" && data.report && <TopProductTable data={data.report} />}
+      {b.data === "peers" && data.peers?.length ? <Peers items={data.peers} /> : null}
+      {b.data === "videos" && data.videos?.length ? <Videos items={data.videos} handle={handle} /> : null}
+      {b.data === "top_videos" && data.report?.top_videos.length ? <TopVideoTable data={data.report} handle={handle} /> : null}
     </div>
   );
 }
 
-function Conclusion({ text, reasons, report, typing }: { text: string; reasons: NonNullable<ChatMessage["reasons"]>; report?: ReportData; typing?: boolean }) {
+function Conclusion({
+  text,
+  reasons,
+  report,
+  typing,
+  onRevealed,
+}: {
+  text: string;
+  reasons: NonNullable<ChatMessage["reasons"]>;
+  report?: ReportData;
+  typing?: boolean;
+  onRevealed?: () => void;
+}) {
   return (
-    <div className="animate-rise rounded-xl border border-brand/30 bg-brand-soft/40 px-4 py-3">
+    <div className="rounded-xl border border-brand/30 bg-brand-soft/40 px-4 py-3">
       <p className="mb-1.5 flex items-center gap-1.5 text-[11.5px] font-semibold uppercase tracking-wide text-brand">
         <Sparkles size={13} /> Kết luận
       </p>
-      <p className="text-[14.5px] font-medium leading-relaxed">{typing ? <Typewriter key={text} text={text} /> : text}</p>
+      <p className="text-[14.5px] font-medium leading-relaxed">{typing ? <Typewriter key={text} text={text} onDone={onRevealed} /> : text}</p>
       {reasons.length > 0 && (
         <ul className="mt-2 space-y-1.5 border-t border-brand/20 pt-2 text-[13.5px]">
           {reasons.map((r, i) => (
-            <li key={i} className="animate-rise flex gap-2" style={{ animationDelay: `${i * 90}ms` }}>
+            <li key={i} className="flex gap-2">
               <CircleCheck size={15} className="mt-0.5 shrink-0 text-brand" /> {r.text}
             </li>
           ))}
@@ -757,18 +1265,17 @@ function Conclusion({ text, reasons, report, typing }: { text: string; reasons: 
  * "Bạn cũng có thể hỏi" — **đứng ngoài khối kết luận**, dạng chip bo tròn như gợi ý tiếp theo,
  * để không bị nhầm là một phần của câu trả lời.
  */
-function FollowUps({ items, onAsk }: { items: string[]; onAsk: (q: string) => void }) {
+function FollowUps({ items, onAsk, animate }: { items: string[]; onAsk: (q: string) => void; animate?: boolean }) {
   return (
-    <div className="animate-rise space-y-1.5">
+    <div className={`${animate ? "animate-fade" : ""} space-y-1.5`}>
       <p className="text-[13px] text-ink-muted">Bạn cũng có thể hỏi</p>
       <div className="flex flex-col items-start gap-1.5">
-        {items.map((q, i) => (
+        {items.map((q) => (
           <button
             key={q}
             type="button"
             onClick={() => onAsk(q)}
-            style={{ animationDelay: `${i * 80}ms` }}
-            className="animate-rise group flex max-w-full items-center gap-2 rounded-full border border-line bg-white px-3.5 py-1.5 text-left text-[13.5px] text-zinc-700 transition hover:border-brand/50 hover:text-brand-strong"
+            className="group flex max-w-full items-center gap-2 rounded-full border border-line bg-white px-3.5 py-1.5 text-left text-[13.5px] text-zinc-700 transition hover:border-brand/50 hover:text-brand-strong"
           >
             <span className="min-w-0">{q}</span>
             <ArrowUpRight size={14} className="shrink-0 text-zinc-300 transition group-hover:text-brand" />

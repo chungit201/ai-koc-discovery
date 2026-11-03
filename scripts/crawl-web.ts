@@ -217,7 +217,7 @@ try {
   console.error(`✖ run ${runId} stopped: ${err instanceof Error ? err.message : err}`);
   await web.close();
   await closeDb();
-  process.exit(1);
+  process.exit(kind === "locked" ? 3 : 1); // 3 = account warning/lock → the daemon must NOT retry
 } finally {
   await web.close();
 }

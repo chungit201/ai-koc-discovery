@@ -1,6 +1,8 @@
 import "server-only";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { getDb } from "../db/mongo";
@@ -191,6 +193,199 @@ function spawnCli(args: string[], input: string): Promise<string> {
     });
     child.stdin.end(input);
   });
+}
+
+// ── Chế độ agent (docs/10-koc-agent.md, P4) ──────────────────────────────────
+
+/** Một MCP server stdio cho agent — chạy bằng chính node đang chạy app, cwd = gốc repo. */
+export interface AgentMcp {
+  name: string;
+  /** Đường dẫn script tương đối với gốc repo, vd `scripts/koc-mcp.ts`. */
+  script: string;
+  env: Record<string, string>;
+}
+
+export type AgentEvent =
+  /** Agent gọi một công cụ. `name` đã bỏ tiền tố `mcp__<server>__`. */
+  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
+  | { type: "tool_result"; id: string; name: string; is_error: boolean; text: string }
+  /** Đoạn chữ agent viết giữa các lần gọi (kế hoạch, nhận xét) — câu trả lời cuối nằm ở `done`. */
+  | { type: "text"; text: string }
+  | { type: "done"; result: ClaudeResult & { turns: number; tool_calls: number } };
+
+/** Agent gọi nhiều lượt công cụ rồi mới viết — đo trước P4 ~40–90 s, để rộng cho câu khó. */
+const AGENT_TIMEOUT_MS = 300_000;
+const AGENT_MAX_TURNS = 24;
+
+/**
+ * Chạy Claude CLI như một agent có công cụ MCP và **phát sự kiện theo thời gian thực** (đọc
+ * `stream-json` từng dòng) để giao diện hiện từng lần gọi công cụ thành thẻ như Kalopilot.
+ *
+ * Khác `claude()`: không cache (câu trả lời phụ thuộc kết quả công cụ của phiên), không thử lại khi
+ * quá thời gian (đắt và các lần gọi công cụ đã ghi evidence), chỉ cho phép công cụ `mcp__<server>__*`
+ * — công cụ có sẵn của CLI (đọc file, bash…) tắt bằng `--tools ""`, trừ những cái liệt kê trong
+ * `builtinTools` (vd tìm web).
+ */
+export async function* claudeAgent(opts: {
+  system: string;
+  prompt: string;
+  mcp: AgentMcp;
+  model?: "haiku" | "sonnet";
+  purpose: string;
+  signal?: AbortSignal;
+  /** Công cụ có sẵn của CLI được bật thêm, vd `["WebSearch", "WebFetch"]`. Mặc định tắt hết. */
+  builtinTools?: string[];
+}): AsyncGenerator<AgentEvent> {
+  const model = opts.model ?? "sonnet";
+  const db = await getDb();
+  const started = Date.now();
+  const root = process.cwd();
+  const config = join(tmpdir(), `detola-mcp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`);
+  await writeFile(
+    config,
+    JSON.stringify({
+      mcpServers: {
+        [opts.mcp.name]: {
+          type: "stdio",
+          command: process.execPath,
+          args: ["--conditions=react-server", `--env-file=${join(root, ".env.local")}`, "--import", "tsx", join(root, opts.mcp.script)],
+          env: opts.mcp.env,
+        },
+      },
+    }),
+  );
+  const prefix = `mcp__${opts.mcp.name}__`;
+  const args = [
+    "-p",
+    "--model", model,
+    "--output-format", "stream-json",
+    "--verbose",
+    "--mcp-config", config,
+    "--strict-mcp-config",
+    "--allowedTools", [`${prefix}*`, ...(opts.builtinTools ?? [])].join(","),
+    "--tools", (opts.builtinTools ?? []).join(","),
+    "--max-turns", String(AGENT_MAX_TURNS),
+    "--no-session-persistence",
+    "--system-prompt", opts.system,
+  ];
+
+  const child = spawn(CLI, args, { windowsHide: true, cwd: root });
+  // Hàng đợi dòng stdout → generator đọc dần; kết thúc khi tiến trình đóng
+  const queue: string[] = [];
+  let wake: (() => void) | null = null;
+  let closed: { code: number | null } | null = null;
+  let failure: Error | null = null;
+  let buf = "";
+  let err = "";
+  const notify = () => {
+    wake?.();
+    wake = null;
+  };
+  child.stdout.on("data", (d) => {
+    buf += d;
+    const lines = buf.split("\n");
+    buf = lines.pop() ?? "";
+    queue.push(...lines.filter((l) => l.trim()));
+    notify();
+  });
+  child.stderr.on("data", (d) => (err += d));
+  child.on("error", (e) => ((failure = e), notify()));
+  child.on("close", (code) => {
+    if (buf.trim()) queue.push(buf);
+    closed = { code };
+    notify();
+  });
+  const kill = (why: string) => {
+    if (!closed) child.kill();
+    failure ??= new Error(why);
+    notify();
+  };
+  const timer = setTimeout(() => kill(TIMEOUT_MESSAGE), AGENT_TIMEOUT_MS);
+  const onAbort = () => kill("Đã huỷ");
+  opts.signal?.addEventListener("abort", onAbort);
+  child.stdin.end(opts.prompt);
+
+  const names = new Map<string, string>(); // tool_use_id → tên công cụ
+  let final: Record<string, unknown> | null = null;
+  let toolCalls = 0;
+  try {
+    while (true) {
+      if (!queue.length) {
+        if (failure) throw failure;
+        if (closed) break;
+        await new Promise<void>((r) => (wake = r));
+        continue;
+      }
+      let ev: Record<string, unknown>;
+      try {
+        ev = JSON.parse(queue.shift()!);
+      } catch {
+        continue; // dòng không phải JSON (cảnh báo của CLI) — bỏ qua
+      }
+      const content = ((ev.message as { content?: unknown })?.content ?? []) as Record<string, unknown>[];
+      if (ev.type === "assistant")
+        for (const c of Array.isArray(content) ? content : []) {
+          if (c.type === "tool_use") {
+            const name = String(c.name ?? "").replace(prefix, "");
+            names.set(String(c.id), name);
+            toolCalls++;
+            yield { type: "tool_use", id: String(c.id), name, input: (c.input as Record<string, unknown>) ?? {} };
+          } else if (c.type === "text" && String(c.text ?? "").trim()) yield { type: "text", text: String(c.text) };
+        }
+      else if (ev.type === "user")
+        for (const c of Array.isArray(content) ? content : []) {
+          if (c.type !== "tool_result") continue;
+          const raw = c.content;
+          const text = typeof raw === "string" ? raw : Array.isArray(raw) ? raw.map((x: { text?: string }) => x.text ?? "").join("\n") : "";
+          yield { type: "tool_result", id: String(c.tool_use_id), name: names.get(String(c.tool_use_id)) ?? "", is_error: Boolean(c.is_error), text };
+        }
+      else if (ev.type === "result") final = ev;
+    }
+  } catch (e) {
+    await log(db, { endpoint: opts.purpose, model, tokens_in: 0, tokens_out: 0, cost: 0, latency: Date.now() - started, cache_hit: false, ok: false, error: (e as Error).message });
+    throw e;
+  } finally {
+    clearTimeout(timer);
+    opts.signal?.removeEventListener("abort", onAbort);
+    if (!closed) child.kill();
+    await unlink(config).catch(() => {});
+  }
+
+  if (!final) {
+    const msg = `Claude CLI kết thúc không có kết quả (exit ${(closed as { code: number | null } | null)?.code}): ${err.slice(0, 300)}`;
+    await log(db, { endpoint: opts.purpose, model, tokens_in: 0, tokens_out: 0, cost: 0, latency: Date.now() - started, cache_hit: false, ok: false, error: msg });
+    throw new Error(msg);
+  }
+  const u = (final.usage ?? {}) as Record<string, number>;
+  const modelId = pickModelId(final.modelUsage as Record<string, unknown> | undefined, model);
+  if (modelId !== model) await rememberModelId(model, modelId);
+  const result = {
+    text: String(final.result ?? ""),
+    model,
+    model_id: modelId,
+    tokens_in: (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0),
+    tokens_out: u.output_tokens ?? 0,
+    cost_usd: Number(final.total_cost_usd ?? 0),
+    latency_ms: Date.now() - started,
+    cache_hit: false,
+    turns: Number(final.num_turns ?? 0),
+    tool_calls: toolCalls,
+  };
+  const isError = Boolean(final.is_error) || (final.subtype !== undefined && final.subtype !== "success");
+  await log(db, {
+    endpoint: opts.purpose,
+    model,
+    model_id: modelId,
+    tokens_in: result.tokens_in,
+    tokens_out: result.tokens_out,
+    cost: result.cost_usd,
+    latency: result.latency_ms,
+    cache_hit: false,
+    ok: !isError,
+    error: isError ? String(final.subtype ?? result.text).slice(0, 300) : undefined,
+  });
+  if (isError) throw new Error(final.subtype === "error_max_turns" ? `Agent vượt ${AGENT_MAX_TURNS} lượt` : result.text || "Claude CLI báo lỗi");
+  yield { type: "done", result };
 }
 
 async function log(

@@ -5,6 +5,7 @@ import { useOptimistic, useRef } from "react";
 import { useFormStatus } from "react-dom";
 import type { ChatMessage } from "@/lib/chat";
 import { CAPABILITIES } from "@/lib/plan";
+import { AgentMessage } from "@/components/ask-bar";
 
 type Shown = ChatMessage & { pending?: boolean };
 
@@ -49,10 +50,19 @@ export function ChatThread({
               <p className="flex items-center gap-2 text-[14px] text-ink-muted">
                 <Loader2 size={15} className="animate-spin text-brand" /> {waiting}
               </p>
+            ) : m.agent && m.blocks?.length ? (
+              // Câu giải thích / so sánh / thông tin ngoài dữ liệu do agent trả lời: bảng, chip nguồn, các bước
+              <AgentMessage
+                m={m}
+                onAsk={(q) => {
+                  const ta = ref.current?.elements.namedItem("text") as HTMLTextAreaElement | null;
+                  if (ta) (ta.value = q), ta.focus();
+                }}
+              />
             ) : (
               <p className="text-[14.5px] leading-relaxed">{m.text}</p>
             )}
-            {m.reasons && m.reasons.length > 0 && (
+            {!m.agent && m.reasons && m.reasons.length > 0 && (
               <ul className="space-y-1.5 border-t border-line pt-2 text-[13.5px]">
                 {m.reasons.map((r, i) => (
                   <li key={i} className="flex gap-2">

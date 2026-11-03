@@ -136,6 +136,7 @@ Người bán (brand mỹ phẩm) nhập yêu cầu chiến dịch → hệ th�
 | Phân tích video (S4) — 1 ảnh 4 khung/video, cache theo video + nội dung + model + prompt | `src/lib/pipeline/s4-video.ts`, `src/lib/media/frames.ts`, `/api/frames/[id]` | ✅ |
 | Xếp hạng + lý do (S5) | `src/lib/pipeline/s5-recommend.ts`, `src/lib/evidence/validate.ts` | ✅ đo: $0,004 / chiến dịch 5 KOC, 0 lý do bị loại |
 | Validator bằng chứng | `src/lib/evidence/validate.ts` | ⬜ |
+| Số liệu kênh một nguồn (P1) + công cụ agent hỏi KOC (P2, evidence theo phiên) — `docs/10-koc-agent.md` | `src/lib/koc-data/facts.ts`, `src/lib/koc-data/tools.ts`, `npm run koc:tool`, MCP `scripts/koc-mcp.ts` (P3), `claudeAgent` trong `src/lib/llm/claude.ts` (P4), `src/lib/chat-creator-agent.ts` + `ToolTableView` trong `ask-bar.tsx` (P5, cờ `KOC_AGENT=1`); công cụ `analyze_videos` + chip nguồn (P5b); câu ngoài dữ liệu → WebSearch/WebFetch, kiểm link + số theo web đã đọc (P5c) | ✅ xong 2026-11-03 (P1–P5d, hiển thị kiểu ChatGPT; P7: chat chiến dịch `explain`/`web_info` dùng cùng agent + `campaign_context`, S2 dùng chung quy ước số liệu) · P6 benchmark để sau |
 | Trang kết quả + chi phí | `src/app/campaigns/[id]` | ⬜ |
 
 ## 5. Ước tính chi phí AI cho 1 chiến dịch (MVP)

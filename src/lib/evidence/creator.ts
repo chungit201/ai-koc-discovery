@@ -5,6 +5,7 @@ import type { Evidence } from "../scoring/run";
 import { estimateCost, percentileOf } from "../scoring/rules";
 import { compact, pct, vnd } from "../format";
 import { contactItems } from "../contact";
+import { categoryBreakdown, channelTotals, denominator, productFacts } from "../koc-data/facts";
 
 /**
  * Bằng chứng về một KOC, **không gắn chiến dịch nào** (`campaign_id: null`).
@@ -15,7 +16,7 @@ import { contactItems } from "../contact";
  *
  * Mọi con số do code lấy từ DB; AI chỉ được trích `evidence_id` (xem `validateReasons`).
  */
-export const CREATOR_EVIDENCE_VERSION = "koc-ev-v1";
+export const CREATOR_EVIDENCE_VERSION = "koc-ev-v2";
 
 const COSMETICS = "848776,848648";
 
@@ -74,7 +75,7 @@ export interface ProductRef {
   product_id: string;
   name: string;
   revenue: number;
-  share: number; // tỷ trọng trong doanh thu sản phẩm của KOC
+  share: number; // tỷ trọng trên doanh thu kênh (koc-data/facts.ts)
 }
 
 /**
@@ -98,29 +99,9 @@ export async function creatorReport(creatorId: string): Promise<CreatorReport | 
   const db = await getDb();
   const creator = await db.collection(C.creators).findOne({ _id: creatorId as never });
   if (!creator) return null;
-  const list = await db
-    .collection(C.creatorMetrics)
-    .findOne({ creator_id: creatorId, source: "web:creator/queryList", category_scope: COSMETICS }, { sort: { updated_at: -1 } });
-  const rows = await db
-    .collection(C.creatorProducts)
-    .aggregate<{ product_id: string; name?: string; revenue?: number; sales_volume?: number; cat2?: string; cat3?: string }>([
-      { $match: { creator_id: creatorId } },
-      { $group: { _id: "$product_id", revenue: { $max: "$revenue" }, sales_volume: { $max: "$sales_volume" } } },
-      { $sort: { revenue: -1 } },
-      { $lookup: { from: C.products, localField: "_id", foreignField: "_id", as: "p" } },
-      {
-        $project: {
-          _id: 0,
-          product_id: "$_id",
-          revenue: 1,
-          sales_volume: 1,
-          name: { $first: "$p.name" },
-          cat2: { $first: "$p.category_l2.category_name" },
-          cat3: { $first: "$p.category_l3.category_name" },
-        },
-      },
-    ])
-    .toArray();
+  const [totals, rows] = await Promise.all([channelTotals(creatorId), productFacts(creatorId)]);
+  // Mẫu số chung với bằng chứng chat: doanh thu kênh (xem koc-data/facts.ts)
+  const { revenue: total } = denominator(totals, rows);
 
   /**
    * Video nổi bật: người bán muốn thấy KOC đăng gì và video nào kéo được doanh thu. Dữ liệu này đã
@@ -134,41 +115,22 @@ export async function creatorReport(creatorId: string): Promise<CreatorReport | 
     .limit(6)
     .toArray();
 
-  const total = rows.reduce((a, r) => a + (r.revenue ?? 0), 0);
-  const byCat = new Map<string, { revenue: number; sub: Map<string, number> }>();
-  for (const r of rows) {
-    // Không phải một danh mục thật — là sản phẩm Kalodata chưa gắn phân loại (5/55 với @phuongsena).
-    // Gọi là "Khác" khiến bảng đọc như thể KOC có một mảng hàng khác, nên nói thẳng là chưa phân loại.
-    const c2 = String(r.cat2 ?? "").trim() || "Chưa phân loại";
-    const entry = byCat.get(c2) ?? { revenue: 0, sub: new Map() };
-    entry.revenue += r.revenue ?? 0;
-    const c3 = String(r.cat3 ?? "").trim();
-    if (c3) entry.sub.set(c3, (entry.sub.get(c3) ?? 0) + (r.revenue ?? 0));
-    byCat.set(c2, entry);
-  }
-
+  // Sản phẩm Kalodata chưa gắn phân loại hiện là "Chưa phân loại" (5/55 với @phuongsena) — gọi là
+  // "Khác" khiến bảng đọc như thể KOC có một mảng hàng khác.
   return {
     period_days: 30,
-    revenue: (list?.revenue as number) ?? 0,
+    revenue: total,
     products_count: rows.length,
     videos_count: await db.collection(C.videos).countDocuments({ creator_id: creatorId }),
     followers: (creator.followers as number) ?? 0,
-    categories: [...byCat.entries()]
-      .sort((a, b) => b[1].revenue - a[1].revenue)
-      .slice(0, 4)
-      .map(([name, v]) => ({
-        name,
-        revenue: v.revenue,
-        share: total ? v.revenue / total : 0,
-        sub: [...v.sub.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([s]) => s),
-      })),
+    categories: categoryBreakdown(rows, 2, total).slice(0, 4).map(({ name, revenue, share, sub }) => ({ name, revenue, share, sub })),
     top_products: rows.slice(0, 10).map((r, i) => ({
       rank: i + 1,
-      product_id: String(r.product_id),
-      name: String(r.name ?? "Sản phẩm không rõ tên"),
-      revenue: r.revenue ?? 0,
-      share: total ? (r.revenue ?? 0) / total : 0,
-      sales_volume: r.sales_volume ?? 0,
+      product_id: r.product_id,
+      name: r.name,
+      revenue: r.revenue,
+      share: total ? r.revenue / total : 0,
+      sales_volume: r.sales_volume,
     })),
     top_videos: vidRows.map((v, i) => ({
       rank: i + 1,
@@ -195,7 +157,7 @@ const BRAND_STOP = new Set(
 );
 const deAccent = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
-function topBrand(products: { name?: string; revenue?: number }[]): { name: string; count: number; revenue: number } | null {
+export function topBrand(products: { name?: string; revenue?: number }[]): { name: string; count: number; revenue: number } | null {
   const byToken = new Map<string, { count: number; revenue: number; display: string }>();
   for (const p of products) {
     const seen = new Set<string>();
@@ -217,24 +179,9 @@ function topBrand(products: { name?: string; revenue?: number }[]): { name: stri
 
 /** Top sản phẩm theo doanh thu — dùng làm dẫn chứng trực quan, không qua AI. */
 export async function topProducts(creatorId: string, limit = 4): Promise<ProductRef[]> {
-  const db = await getDb();
-  const rows = await db
-    .collection(C.creatorProducts)
-    .aggregate<{ product_id: string; name?: string; revenue?: number }>([
-      { $match: { creator_id: creatorId } },
-      { $group: { _id: "$product_id", revenue: { $max: "$revenue" } } },
-      { $sort: { revenue: -1 } },
-      { $lookup: { from: C.products, localField: "_id", foreignField: "_id", as: "p" } },
-      { $project: { _id: 0, product_id: "$_id", revenue: 1, name: { $first: "$p.name" } } },
-    ])
-    .toArray();
-  const sum = rows.reduce((a, r) => a + (r.revenue ?? 0), 0);
-  return rows.slice(0, limit).map((r) => ({
-    product_id: String(r.product_id),
-    name: String(r.name ?? "Sản phẩm không rõ tên"),
-    revenue: r.revenue ?? 0,
-    share: sum ? (r.revenue ?? 0) / sum : 0,
-  }));
+  const [totals, rows] = await Promise.all([channelTotals(creatorId), productFacts(creatorId)]);
+  const { revenue: sum } = denominator(totals, rows);
+  return rows.slice(0, limit).map((r) => ({ product_id: r.product_id, name: r.name, revenue: r.revenue, share: sum ? r.revenue / sum : 0 }));
 }
 
 export async function creatorEvidence(creatorId: string): Promise<{ claims: Map<string, string>; peers: PeerStats | null }> {
@@ -252,43 +199,9 @@ export async function creatorEvidence(creatorId: string): Promise<{ claims: Map<
   const pEng = percentileOf(pool.map((r) => (r.video_engagement_rate as number) ?? 0));
 
   const list = await db.collection(C.creatorMetrics).findOne({ creator_id: creatorId, source: "web:creator/queryList", category_scope: COSMETICS }, { sort: { updated_at: -1 } });
-  const total = await db.collection(C.creatorMetrics).findOne({ creator_id: creatorId, source: "web:creator/detail/total", category_scope: "all" }, { sort: { updated_at: -1 } });
-  /**
-   * ⚠ PHẢI gộp theo `product_id` trước khi cộng doanh thu.
-   *
-   * `creator_products` lưu **một dòng cho mỗi `(product_id, date_range)`**, nên KOC đã crawl 2 lần
-   * có 2 dòng cho cùng một sản phẩm. Bản cũ thiếu `$group` nên cộng trùng: @phuongsena ra 60,7 tỉ
-   * thay vì 32,7 tỉ (doanh thu thật 30 ngày là 30,3 tỉ) và "65 trên 100 sản phẩm" thay vì /55 —
-   * trong khi `creatorReport()` dựng bảng thì gộp đúng, nên **câu trả lời tự mâu thuẫn với bảng
-   * nằm ngay dưới nó**. Dùng cùng một phép gộp (`$max` mỗi sản phẩm) để hai nơi luôn khớp.
-   */
-  const products = await db
-    .collection(C.creatorProducts)
-    .aggregate<{ name: string; revenue: number; sales_volume: number; unit_price: number; cat2: string; cat3: string }>([
-      { $match: { creator_id: creatorId } },
-      {
-        $group: {
-          _id: "$product_id",
-          revenue: { $max: "$revenue" },
-          sales_volume: { $max: "$sales_volume" },
-          unit_price: { $max: "$unit_price" },
-        },
-      },
-      { $sort: { revenue: -1 } },
-      { $lookup: { from: C.products, localField: "_id", foreignField: "_id", as: "p" } },
-      {
-        $project: {
-          _id: 0,
-          name: { $first: "$p.name" },
-          revenue: 1,
-          sales_volume: 1,
-          unit_price: 1,
-          cat2: { $first: "$p.category_l2.category_name" },
-          cat3: { $first: "$p.category_l3.category_name" },
-        },
-      },
-    ])
-    .toArray();
+  // Số liệu kênh + sản phẩm từ MỘT nguồn (koc-data/facts.ts) — bảng báo cáo đọc cùng nguồn nên
+  // câu trả lời không thể tự mâu thuẫn với bảng nằm ngay dưới nó.
+  const [totals, products] = await Promise.all([channelTotals(creatorId), productFacts(creatorId)]);
   const videos = await db.collection(C.videos).find({ creator_id: creatorId }).sort({ views: -1 }).limit(30).toArray();
 
   const docs: Evidence[] = [];
@@ -360,51 +273,73 @@ export async function creatorEvidence(creatorId: string): Promise<{ claims: Map<
     });
   }
 
-  const daily: { day: string; revenue: number | null }[] = (total?.daily as never) ?? [];
+  const totalsRef = totals?.refs[0] ?? creatorId;
+  const daily = totals?.daily ?? [];
   if (daily.length) {
-    const days = daily.filter((d) => (d.revenue ?? 0) > 0).length;
-    const sum = daily.reduce((a, d) => a + (d.revenue ?? 0), 0);
-    const peak = Math.max(...daily.map((d) => d.revenue ?? 0));
+    const days = daily.filter((d) => d.revenue > 0).length;
+    const sum = daily.reduce((a, d) => a + d.revenue, 0);
+    const peak = Math.max(...daily.map((d) => d.revenue));
     add("consistency", {
       type: "metric",
       claim: `Có doanh thu ${days}/${daily.length} ngày; ngày cao nhất chiếm ${sum ? Math.round((peak / sum) * 100) : 0}% tổng`,
       value: days,
-      source: { collection: C.creatorMetrics, ref: String(total?._id) },
+      source: { collection: C.creatorMetrics, ref: totalsRef },
       strength: "medium",
     });
   }
 
-  if (products.length) {
-    const prodRevenue = products.reduce((a, p) => a + (p.revenue ?? 0), 0);
-    const share = (v: number) => (prodRevenue ? `${Math.round((v / prodRevenue) * 100)}%` : "0%");
+  // Tổng kênh — mẫu số của mọi tỉ trọng bên dưới, nêu thẳng để AI không lấy nhầm số scope mỹ phẩm
+  if (totals?.revenue)
+    add("channel_total", {
+      type: "metric",
+      claim: `Tổng doanh thu cả kênh 30 ngày (${totals.date_range}) ${vnd(totals.revenue)}, ${compact(totals.orders)} đơn, đơn giá bình quân ${vnd(totals.aov)}${
+        totals.product_number ? `; bán ${totals.product_number} sản phẩm khác nhau` : ""
+      }`,
+      value: totals.revenue,
+      source: { collection: C.creatorMetrics, ref: totalsRef },
+      strength: "strong",
+    });
 
-    // "Chủ yếu bán danh mục nào" — gộp doanh thu theo danh mục cấp 2 và cấp 3
+  if (products.length) {
+    const { revenue: denom, coverage } = denominator(totals, products);
+    const base = coverage === null ? "doanh thu các sản phẩm đã thu thập" : "doanh thu kênh";
+    const share = (v: number) => (denom ? `${Math.round((v / denom) * 100)}%` : "0%");
+
+    // "Chủ yếu bán danh mục nào" — gộp doanh thu theo danh mục cấp 1, 2, 3; tỉ trọng trên doanh thu kênh
     for (const [key, level, label] of [
-      ["category_mix", "cat2", "Danh mục"],
-      ["subcategory_mix", "cat3", "Nhóm sản phẩm"],
+      ["category_l1_mix", 1, "Ngành hàng (cấp 1)"],
+      ["category_mix", 2, "Danh mục (cấp 2)"],
+      ["subcategory_mix", 3, "Nhóm sản phẩm (cấp 3)"],
     ] as const) {
-      const byCat = new Map<string, number>();
-      for (const p of products) {
-        const name = String((p as Record<string, unknown>)[level] ?? "").trim();
-        if (name) byCat.set(name, (byCat.get(name) ?? 0) + (p.revenue ?? 0));
-      }
-      const top = [...byCat.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
+      const top = categoryBreakdown(products, level, denom).slice(0, level === 3 ? 5 : 3);
       if (top.length)
         add(key, {
           type: "product",
-          claim: `${label} bán nhiều nhất: ${top.map(([n, v]) => `${n} ${vnd(v)} (${share(v)} doanh thu sản phẩm)`).join("; ")}`,
-          value: top[0][0],
+          claim: `${label} bán nhiều nhất: ${top.map((c) => `${c.name} ${vnd(c.revenue)} (${share(c.revenue)} ${base}, ${c.products} sản phẩm)`).join("; ")}`,
+          value: top[0].name,
           source: { collection: C.creatorProducts, ref: creatorId },
           strength: "strong",
         });
     }
+
+    // Độ phủ: N sản phẩm đã crawl chiếm bao nhiêu doanh thu kênh — để AI không nói quá về phần còn lại
+    if (coverage !== null)
+      add("product_coverage", {
+        type: "product",
+        claim: `${products.length} sản phẩm đã thu thập chiếm ${share(products.reduce((a, p) => a + p.revenue, 0))} doanh thu kênh; top 10 sản phẩm chiếm ${share(
+          products.slice(0, 10).reduce((a, p) => a + p.revenue, 0),
+        )}`,
+        value: coverage,
+        source: { collection: C.creatorProducts, ref: creatorId },
+        strength: "strong",
+      });
 
     // Mức độ phụ thuộc thương hiệu — suy từ tên sản phẩm, là câu hỏi người bán hay quan tâm
     const brand = topBrand(products);
     if (brand)
       add("brand_focus", {
         type: "product",
-        claim: `Thương hiệu xuất hiện nhiều nhất trong danh mục đã bán: ${brand.name} — ${brand.count}/${products.length} sản phẩm, chiếm ${share(brand.revenue)} doanh thu sản phẩm`,
+        claim: `Thương hiệu xuất hiện nhiều nhất trong danh mục đã bán: ${brand.name} — ${brand.count}/${products.length} sản phẩm, chiếm ${share(brand.revenue)} ${base}`,
         value: brand.name,
         source: { collection: C.creatorProducts, ref: creatorId },
         strength: "medium",
@@ -415,13 +350,15 @@ export async function creatorEvidence(creatorId: string): Promise<{ claims: Map<
     // thì không nói được sản phẩm đó thuộc nhóm nào — Kalopilot nêu cả hai.
     add("products", {
       type: "product",
-      claim: `Đã bán ${products.length} sản phẩm, tổng ${vnd(prodRevenue)}; dẫn đầu: ${products
-        .slice(0, 3)
+      // Top 10 (trước đây chỉ 3, tên cắt 55 ký tự — không dựng nổi bảng như Kalopilot). Tên dùng nháy
+      // đơn vì chuỗi này đi thẳng vào prompt yêu cầu JSON.
+      claim: `Top sản phẩm theo doanh thu: ${products
+        .slice(0, 10)
         .map(
-          (p) =>
-            `"${String(p.name ?? "không rõ tên").slice(0, 55)}" ${vnd(p.revenue ?? 0)} (${share(p.revenue ?? 0)}${
-              p.cat3 ? `, thuộc ${p.cat3}` : p.cat2 ? `, thuộc ${p.cat2}` : ""
-            }${p.sales_volume ? `, ${compact(p.sales_volume)} đơn` : ""})`,
+          (p, i) =>
+            `#${i + 1} '${p.name.slice(0, 90)}' ${vnd(p.revenue)} (${share(p.revenue)}${p.cat3 || p.cat2 ? `, thuộc ${p.cat3 || p.cat2}` : ""}${
+              p.sales_volume ? `, ${compact(p.sales_volume)} đơn` : ""
+            }${p.unit_price ? `, giá ${vnd(p.unit_price)}` : ""})`,
         )
         .join("; ")}`,
       value: products.length,
@@ -446,14 +383,19 @@ export async function creatorEvidence(creatorId: string): Promise<{ claims: Map<
         strength: "strong",
       });
 
-    // Số đơn — quy mô bán thật, khác với doanh thu (KOC bán combo giá cao ít đơn vẫn doanh thu lớn)
-    const orders = products.reduce((a, p) => a + (p.sales_volume ?? 0), 0);
+    /**
+     * Số đơn — quy mô bán thật, khác với doanh thu (KOC bán combo giá cao ít đơn vẫn doanh thu lớn).
+     * Có tổng kênh thì dùng số kênh; cộng từ sản phẩm đã crawl (19,9k) lệch với số kênh (23k) và đã
+     * từng làm câu trả lời nêu hai số đơn khác nhau.
+     */
+    const orders = totals?.orders || products.reduce((a, p) => a + p.sales_volume, 0);
+    const orderRevenue = totals?.revenue || products.reduce((a, p) => a + p.revenue, 0);
     if (orders > 0)
       add("orders", {
         type: "product",
-        claim: `Tổng ${compact(orders)} đơn từ ${products.length} sản phẩm đã bán${
-          orders ? `; giá trị đơn bình quân ${vnd(Math.round(prodRevenue / orders))}` : ""
-        }`,
+        claim: `Tổng ${compact(orders)} đơn trong 30 ngày${totals?.orders ? " (cả kênh)" : ` từ ${products.length} sản phẩm đã thu thập`}; giá trị đơn bình quân ${vnd(
+          Math.round(orderRevenue / orders),
+        )}`,
         value: orders,
         source: { collection: C.creatorProducts, ref: creatorId },
         strength: "strong",
@@ -507,8 +449,15 @@ export async function creatorEvidence(creatorId: string): Promise<{ claims: Map<
    */
   // Kênh bán, số đơn, đơn giá, tỷ lệ chốt. Lấy TRƯỚC khối đối chuẩn vì `live_gpm` của chính KOC
   // cần có để so với trung vị nhóm ngay bên dưới.
-  const detail = await db.collection(C.creatorMetrics).findOne({ creator_id: creatorId, source: "creator/detail", category_scope: "all" }, { sort: { updated_at: -1 } });
-  const d = (detail ?? total ?? {}) as Record<string, number | undefined>;
+  const d = {
+    live_gpm: totals?.live_gpm ?? undefined,
+    live_number: totals?.live_number ?? undefined,
+    live_revenue: totals?.live_revenue,
+    video_revenue: totals?.video_revenue,
+    sales_volume: totals?.orders,
+    unit_price: totals?.aov,
+    live_views: totals?.live_views,
+  };
 
   let peerStats: PeerStats | null = null;
   if (followers > 0) {
@@ -625,7 +574,7 @@ export async function creatorEvidence(creatorId: string): Promise<{ claims: Map<
   const orders = d.sales_volume ?? 0;
   const aov = d.unit_price ?? 0;
   const liveViews = d.live_views ?? 0;
-  const metricRef = String((detail ?? total)?._id ?? creatorId);
+  const metricRef = totalsRef;
 
   if (orders || aov)
     add("sales", {
@@ -647,10 +596,12 @@ export async function creatorEvidence(creatorId: string): Promise<{ claims: Map<
     });
 
   if (liveRev || vidRev) {
-    const sum = liveRev + vidRev;
+    // Chia cho doanh thu kênh (gồm cả bán qua thẻ shop), không phải live + video — bản cũ ra "100%"
+    const sum = totals?.revenue || liveRev + vidRev;
+    const p1 = (v: number) => (sum ? `${(Math.round((v / sum) * 1000) / 10).toLocaleString("vi-VN")}%` : "0%");
     add("channel_mix", {
       type: "metric",
-      claim: `Doanh thu từ livestream ${vnd(liveRev)} (${sum ? Math.round((liveRev / sum) * 100) : 0}% tổng) vs từ video ${vnd(vidRev)}${
+      claim: `Doanh thu từ livestream ${vnd(liveRev)} (${p1(liveRev)} doanh thu kênh) vs từ video ${vnd(vidRev)} (${p1(vidRev)})${
         d.live_number ? `; ${d.live_number} phiên live trong kỳ` : ""
       }${d.live_gpm ? `; doanh thu trên 1.000 lượt xem live ${vnd(d.live_gpm)}` : ""}`,
       value: liveRev,

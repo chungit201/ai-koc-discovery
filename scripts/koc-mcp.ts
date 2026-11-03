@@ -1,0 +1,125 @@
+/**
+ * MCP server "koc" (docs/10-koc-agent.md, P3): đưa 7 công cụ đọc DB trong `koc-data/tools.ts` cho
+ * Claude CLI ở chế độ agent. JSON-RPC 2.0 qua stdio, mỗi thông điệp một dòng — tự viết, không thêm
+ * dependency.
+ *
+ * Phiên và KOC do tiến trình cha cố định qua biến môi trường, **agent không chọn được**: nó chỉ đọc
+ * được đúng KOC đang hỏi, và mọi bằng chứng rơi vào đúng phiên để validator đối chiếu.
+ *   KOC_SESSION=<id> KOC_CREATOR=<creator_id>
+ *   node --conditions=react-server --env-file=.env.local --import tsx scripts/koc-mcp.ts
+ *
+ * stdout chỉ dành cho JSON-RPC — mọi log ra stderr.
+ */
+import { createInterface } from "node:readline";
+import { closeDb } from "../src/lib/db/mongo";
+import { KOC_TOOLS, runKocTool, type ToolResult } from "../src/lib/koc-data/tools";
+
+const SESSION = process.env.KOC_SESSION ?? "";
+/**
+ * KOC được phép đọc. Chat KOC: đúng một người (`KOC_CREATOR`). Chat chiến dịch: danh sách của chiến
+ * dịch (`KOC_CREATORS`, phân cách dấu phẩy) + `KOC_CAMPAIGN` — agent chọn KOC qua tham số
+ * `creator_id`, nhưng chỉ trong danh sách này.
+ */
+const CREATORS = (process.env.KOC_CREATORS ?? process.env.KOC_CREATOR ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+const CAMPAIGN = process.env.KOC_CAMPAIGN || undefined;
+const MULTI = CREATORS.length > 1;
+const PROTOCOL = "2025-06-18";
+
+console.log = console.info = (...a: unknown[]) => console.error(...a); // không để thư viện nào làm bẩn stdout
+
+type Id = string | number | null;
+interface Msg {
+  jsonrpc: "2.0";
+  id?: Id;
+  method?: string;
+  params?: Record<string, unknown>;
+}
+
+const send = (m: Record<string, unknown>): void => void process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...m }) + "\n");
+const reply = (id: Id, result: unknown) => send({ id, result });
+const fail = (id: Id, code: number, message: string) => send({ id, error: { code, message } });
+
+/** Hàng tối đa trả cho model mỗi lần gọi — đủ dựng bảng, không làm phình ngữ cảnh. */
+const MAX_ROWS = 30;
+
+/**
+ * Model nhận `evidence_id` trước tiên để trích dẫn, rồi tóm tắt (số đã định dạng) và các hàng chi
+ * tiết. `numbers` thô không gửi: model cần chép số đã định dạng, còn số thô chỉ dùng để kiểm tra.
+ */
+function toText(r: ToolResult): string {
+  const rows = r.rows.slice(0, MAX_ROWS);
+  return [
+    `evidence_id: ${r.evidence_id}`,
+    r.summary,
+    rows.length ? `rows (${rows.length}${r.rows.length > rows.length ? `/${r.rows.length}` : ""}): ${JSON.stringify(rows)}` : "",
+    `numbers (dùng làm input cho calc): ${JSON.stringify(r.numbers)}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/** Chat chiến dịch: thêm tham số `creator_id` cho các công cụ đọc dữ liệu một KOC. */
+function withCreator(name: string, schema: Record<string, unknown>): Record<string, unknown> {
+  if (!MULTI || name === "calc" || name === "campaign_context") return schema;
+  const props = (schema.properties as Record<string, unknown>) ?? {};
+  return {
+    ...schema,
+    properties: { creator_id: { type: "string", description: "id KOC (lấy từ campaign_context). Bỏ trống = KOC đầu danh sách." }, ...props },
+  };
+}
+
+async function handle(m: Msg): Promise<void> {
+  const id = m.id ?? null;
+  switch (m.method) {
+    case "initialize":
+      return reply(id, {
+        protocolVersion: typeof m.params?.protocolVersion === "string" ? m.params.protocolVersion : PROTOCOL,
+        capabilities: { tools: {} },
+        serverInfo: { name: "koc", version: "1.0.0" },
+      });
+    case "ping":
+      return reply(id, {});
+    case "tools/list":
+      return reply(id, {
+        tools: KOC_TOOLS.filter((t) => t.name !== "campaign_context" || CAMPAIGN).map((t) => ({ name: t.name, description: t.description, inputSchema: withCreator(t.name, t.input_schema) })),
+      });
+    case "tools/call": {
+      const name = String(m.params?.name ?? "");
+      const { creator_id, ...args } = (m.params?.arguments as Record<string, unknown>) ?? {};
+      try {
+        if (!SESSION || !CREATORS.length) throw new Error("Thiếu KOC_SESSION / KOC_CREATOR(S)");
+        const creatorId = creator_id ? String(creator_id) : CREATORS[0];
+        if (!CREATORS.includes(creatorId)) throw new Error(`creator_id ${creatorId} không thuộc danh sách KOC của chiến dịch — lấy id từ campaign_context`);
+        // creator_id nằm trong args để id bằng chứng khác nhau giữa các KOC
+        const r = await runKocTool(name, { creatorId, sessionId: SESSION, campaignId: CAMPAIGN }, MULTI && creator_id ? { ...args, creator_id: creatorId } : args);
+        return reply(id, { content: [{ type: "text", text: toText(r) }] });
+      } catch (e) {
+        // Lỗi công cụ trả về như kết quả (isError) để model đọc được và tự sửa tham số
+        return reply(id, { content: [{ type: "text", text: `Lỗi: ${(e as Error).message}` }], isError: true });
+      }
+    }
+    default:
+      if (m.id === undefined) return; // notification (notifications/initialized, cancelled…) — không trả lời
+      return fail(id, -32601, `Không hỗ trợ ${m.method}`);
+  }
+}
+
+const rl = createInterface({ input: process.stdin });
+const pending = new Set<Promise<void>>();
+rl.on("line", (line) => {
+  if (!line.trim()) return;
+  let m: Msg;
+  try {
+    m = JSON.parse(line);
+  } catch {
+    return fail(null, -32700, "JSON không hợp lệ");
+  }
+  const p = handle(m).catch((e) => fail(m.id ?? null, -32603, (e as Error).message));
+  pending.add(p);
+  p.finally(() => pending.delete(p));
+});
+rl.on("close", async () => {
+  await Promise.all(pending);
+  await closeDb();
+  process.exit(0);
+});
