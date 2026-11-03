@@ -1,5 +1,10 @@
 # 10 — Hỏi AI về KOC theo kiểu agent (Claude CLI + công cụ đọc DB)
 
+> **Đây là nhật ký xây dựng (P1→P7), giữ để tra vì sao làm thế.** Phần nền móng — công cụ đọc DB,
+> MCP server, `claudeAgent`, evidence theo phiên — vẫn đúng y nguyên. Riêng phần GIAO DIỆN và luồng
+> hội thoại ở P7 đã bị thay: chat chiến dịch, `handleTurn`/`RERUN_FROM` và `chat-thread.tsx` không
+> còn, tất cả gộp vào trợ lý Tola. Trạng thái hiện tại xem **[13 — Trợ lý Tola](13-tola.md)**.
+
 > Mục tiêu: câu "Chủ yếu bán danh mục và sản phẩm nào?" cho @phuongsena phải ra được chất lượng như
 > Kalopilot (xem ảnh so sánh ngày 2026-11-02): bảng top 10 kèm danh mục, cơ cấu L1/L2/L3 theo % doanh
 > thu kênh, kênh bán live/video, định vị giá, đối chuẩn — **mọi con số có nguồn**.
@@ -101,10 +106,10 @@ Nguyên tắc chống bịa giữ nguyên (`docs/04-data-model.md` §3.1): số 
   - Thử @phuongsena: 8 lần gọi công cụ, **26 s, $0,13**, 14 ý có nguồn, 0 ý bị bỏ. AI phát hiện: 3 video bán tốt nhất demo 50–55/100, chỉ cầm sản phẩm giới thiệu, chưa thoa thử; 2 video đầu bán SKU không nằm trong top 10 → nói "chưa đủ dữ liệu để nối". Mục căn cứ: live 95,8% + video 0,2% + demo yếu → "doanh thu đến từ live, video chủ yếu kéo người xem".
 - [x] **P7. Mang logic agent sang chiến dịch** — xong 2026-11-03 (chờ người dùng test)
   - **(1) S2 chấm điểm dùng chung quy ước số liệu** (`scoring/run.ts`): sản phẩm gộp theo `(KOC, product_id)` trước khi cộng — đo trên DB: **17/292 KOC bị cộng đôi** doanh thu sản phẩm (vd 19,10 tỉ → đúng 9,55 tỉ); tỉ trọng chia cho **doanh thu kênh** (ưu tiên `creator/detail` như `channelTotals`), chưa có thì ghi rõ "doanh thu sản phẩm đã thu thập"; claim "top X%" → "cao hơn Y% KOC đủ điều kiện". Chiến dịch tạo trước 2026-11-03 vẫn giữ điểm/bằng chứng cũ cho tới khi chấm lại.
-  - **(2) Câu giải thích/so sánh → agent**: `handleTurn` ý định `explain` (khi `KOC_AGENT=1`) chạy `analyseCampaignAgent` — MCP nhận `KOC_CREATORS` (danh sách được chọn + dự phòng) + `KOC_CAMPAIGN`; mọi công cụ một-KOC có thêm `creator_id` (chỉ trong danh sách); công cụ mới `campaign_context` (tiêu chí, điểm thành phần, ngân sách, chi phí ước tính, bằng chứng S2 từng KOC). Prompt: điểm/ngân sách là kết quả hệ thống, chỉ giải thích, không tự chấm lại; muốn đổi thì người dùng nhắn để `RERUN_FROM` chạy lại.
+  - ~~**(2) Câu giải thích/so sánh → agent**~~ (đã thay bằng Tola — `handleTurn`, `RERUN_FROM`, `INTRO_CAMPAIGN` không còn; `campaign_context` thì vẫn dùng): `handleTurn` ý định `explain` (khi `KOC_AGENT=1`) chạy `analyseCampaignAgent` — MCP nhận `KOC_CREATORS` (danh sách được chọn + dự phòng) + `KOC_CAMPAIGN`; mọi công cụ một-KOC có thêm `creator_id` (chỉ trong danh sách); công cụ mới `campaign_context` (tiêu chí, điểm thành phần, ngân sách, chi phí ước tính, bằng chứng S2 từng KOC). Prompt: điểm/ngân sách là kết quả hệ thống, chỉ giải thích, không tự chấm lại; muốn đổi thì người dùng nhắn để `RERUN_FROM` chạy lại.
   - **(3) Ý định mới `web_info`** (hỏi thông tin ngoài dữ liệu: phốt, tiểu sử, thương hiệu…) → agent tìm web như P5c. `out_of_scope` giờ chỉ còn YÊU CẦU việc hệ thống không làm (Shopee, booking…).
-  - Agent dùng chung: `runAgent()` trong `chat-creator-agent.ts` (chat KOC = `INTRO_KOC + RULES`, chiến dịch = `INTRO_CAMPAIGN + RULES`); tiêu đề thẻ ghi tên KOC đang đọc ("Lấy tổng quan kênh · Ánh Ốc").
-  - Giao diện chiến dịch (`chat-thread.tsx`): tin nhắn agent hiện bằng `AgentMessage` (xuất từ `ask-bar.tsx`) — "Quá trình xử lý · N bước" thu gọn, bảng `campaign_context` (avatar, điểm, điểm thành phần, ngân sách), chip nguồn (bấm tự mở mục thu gọn), gợi ý hỏi tiếp điền vào ô nhập. Không stream (server action) — chờ ~30-40 s.
+  - Agent dùng chung: `runAgent()` trong `chat-creator-agent.ts` (chat KOC = `INTRO_KOC + RULES`, Tola = `INTRO_TOLA + RULES`); tiêu đề thẻ ghi tên KOC đang đọc ("Lấy tổng quan kênh · Ánh Ốc").
+  - ~~Giao diện chiến dịch (`chat-thread.tsx`)~~ (đã bỏ; `AgentMessage` + `ToolTableView` thì vẫn dùng trong Tola): tin nhắn agent hiện bằng `AgentMessage` (xuất từ `ask-bar.tsx`) — "Quá trình xử lý · N bước" thu gọn, bảng `campaign_context` (avatar, điểm, điểm thành phần, ngân sách), chip nguồn (bấm tự mở mục thu gọn), gợi ý hỏi tiếp điền vào ô nhập. Không stream (server action) — chờ ~30-40 s.
   - Thử (dryRun, chiến dịch kem chống nắng): "vì sao KOC #1 mà không phải dự phòng #1?" → 32 s, $0,19: so 4 điểm thành phần qua `calc`, đọc dữ liệu thật cả hai KOC, nêu rủi ro phụ thuộc thương hiệu ASUNMEE; "KOC đứng đầu có phốt không?" → `web_info`, 3 lần tìm + 1 đọc trang, 41 s, $0,20, trả "chưa thấy" kèm nguồn, tách vấn đề thương hiệu khỏi KOC; "chạy trên Shopee được không?" → `out_of_scope`, $0,001.
 
 **Trạng thái: ✅ XONG 2026-11-03** — người dùng test trên giao diện và nghiệm thu (P1–P5d). Còn lại P6 là việc sau, không chặn.

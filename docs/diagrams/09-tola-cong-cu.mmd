@@ -1,0 +1,48 @@
+flowchart LR
+    AG["Claude CLI (sonnet)<br/>--allowedTools mcp__koc__*, WebSearch, WebFetch"]
+    AG <--> MCP["MCP server 'koc'<br/>scripts/koc-mcp.ts · JSON-RPC qua stdio"]
+
+    MCP --- ENV["Phạm vi do TIẾN TRÌNH CHA cố định, agent không đổi được:<br/>KOC_SESSION · KOC_CREATORS · KOC_CAMPAIGN"]
+
+    subgraph G ["Đọc — toàn hệ thống"]
+        G1["search_creators<br/>lọc sản phẩm / follower / doanh thu / tuổi / MCN"]
+        G2["list_campaigns"]
+    end
+
+    subgraph K ["Đọc — một KOC (mặc định lấy KOC_CREATORS[0])"]
+        K1["get_overview"]
+        K2["list_products(product)"]
+        K3["category_breakdown(level)"]
+        K4["list_videos(sort, product_id)"]
+        K5["analyze_videos — TỐN TIỀN"]
+        K6["get_daily"]
+        K7["get_peers"]
+    end
+
+    subgraph C ["Chỉ khi có KOC_CAMPAIGN"]
+        C1["campaign_context — tiêu chí, điểm, ngân sách,<br/>phần 'AI ĐÃ XEM' của từng KOC"]
+        C2["allocate_budget — phương án chia tiền (không ghi DB)"]
+        C3["GHI: exclude_koc (undo) → chạy lại S5"]
+        C4["GHI: update_criteria (số KOC, ngân sách) → chạy lại S5"]
+        C5["GHI: deepen_koc — 1 người/lần → chạy lại S4 → S5"]
+    end
+
+    subgraph X ["Tính toán"]
+        X1["calc — chỉ nhận số ĐÃ CÓ trong evidence của phiên"]
+    end
+
+    MCP --> G
+    MCP --> K
+    MCP --> C
+    MCP --> X
+
+    G --> EV[("evidence của phiên<br/>summary · rows · numbers")]
+    K --> EV
+    C --> EV
+    X --> EV
+    EV --> VER["answer-verify.ts kiểm mọi con số ở ĐẦU RA"]
+
+    classDef write fill:#fee2e2,stroke:#dc2626
+    classDef guard fill:#fef3c7,stroke:#d97706
+    class C3,C4,C5 write
+    class ENV,VER guard

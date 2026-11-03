@@ -4,28 +4,8 @@ Cập nhật 2026-11-03. Đọc file này trước khi code tiếp.
 
 ## Kiến trúc hiện tại
 
-Tola là **lối vào duy nhất**. Trang `/campaigns` đã xoá hẳn.
-
-```
-/tola  ──POST──▶  src/app/api/tola/ask/route.ts  (NDJSON stream)
-                   ├─ resolveMentions()        @handle → creator_id  (lib/mentions.ts, code làm, không để agent đoán)
-                   ├─ classifyAsk()            "deep" (brief tuyển KOC) | "quick"
-                   ├─ deep → runDeepSearch()    lib/tola-deep.ts: chạy S2→S5 NGAY trong tiến trình Next,
-                   │                            phát từng thẻ bước ra chat (MCP child process chết sau mỗi lượt
-                   │                            nên không chạy pipeline trong agent được)
-                   ├─ askTola()                lib/chat-creator-agent.ts → Claude CLI + MCP koc (scripts/koc-mcp.ts)
-                   │                            chỉ số bước của agent được +offset cho khỏi đè thẻ pipeline
-                   └─ lưu `tola_chats`         lịch sử hội thoại, cột trái /tola
-```
-
-Chống bịa = **kiểm tra đầu ra**, không khoá đầu vào: model viết markdown tự do (bảng, bố cục của
-nó), rồi `lib/answer-verify.ts` đối chiếu mọi con số với evidence của phiên; số không tra được bị
-gạch chân nhạt ở giao diện (`components/answer-markdown.tsx`). Thiết kế cũ (model chỉ được phát
-khối định sẵn) làm mọi câu trả lời giống hệt nhau nên đã bỏ.
-
-File chính: `lib/tola-deep.ts`, `app/api/tola/ask/route.ts`, `lib/chat-creator-agent.ts`,
-`lib/answer-verify.ts`, `lib/mentions.ts`, `lib/koc-data/tools.ts`, `components/tola-chat.tsx`,
-`components/tola-history.tsx`, `lib/brand.ts` (`AI_NAME`).
+Đã viết thành tài liệu riêng, có sơ đồ: **[13 — Trợ lý Tola](13-tola.md)** (cách vận hành, bộ công cụ,
+chống bịa) và **[12 — Câu hỏi tìm KOC](12-tim-koc.md)** (thang điểm, ngưỡng, chỗ dễ vỡ khi kiểm thử).
 
 ## Đã xong
 

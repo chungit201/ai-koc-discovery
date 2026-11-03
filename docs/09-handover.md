@@ -2,6 +2,12 @@
 
 > Đọc file này TRƯỚC khi sửa code phần hỏi đáp KOC. Kèm [`07-test-plan.md`](07-test-plan.md)
 > (bộ test) và [`01-plan.md`](01-plan.md) (Step 10b/10c).
+>
+> **Cập nhật 2026-11-03:** luồng tả ở §1 (planAnalysis → khối `AnswerBlock`) giờ chỉ còn chạy cho
+> **câu hỏi liên hệ / chi phí booking / chất lượng nội dung kiểu cũ** và khi `KOC_AGENT` tắt
+> (`OLD_FLOW_Q` + `useAgentFor` trong `chat-creator-agent.ts`). Mọi câu còn lại đi **agent có công
+> cụ**: xem [`10-koc-agent.md`](10-koc-agent.md) và [`13-tola.md`](13-tola.md). Các vấn đề mở ở §2
+> thuộc về luồng cũ, đọc với tinh thần đó.
 
 ## 0. TRẠNG THÁI: 🟡 CÒN PHẢI TEST THÊM
 

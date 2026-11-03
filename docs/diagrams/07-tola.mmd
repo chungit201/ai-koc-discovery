@@ -1,7 +1,7 @@
 flowchart TD
     IN["Người bán gõ MỘT ô chat<br/>(màn /tola · trang KOC · trong hội thoại)"]
     IN --> MEN["Giải nghĩa tag @handle<br/>lib/mentions.ts — code tra DB, không để agent đoán"]
-    MEN --> R{"Câu hỏi thuộc loại nào?"}
+    MEN --> R{"Câu hỏi thuộc loại nào?<br/>looksLikeBrief() bằng code, không khớp mới hỏi Haiku"}
 
     R -->|"BRIEF TÌM KOC<br/>nêu sản phẩm + số KOC / ngân sách / khán giả"| A1
     R -->|"HỎI VỀ KOC CỤ THỂ<br/>có @handle, hoặc tên KOC"| B1
@@ -14,6 +14,7 @@ flowchart TD
         A2 --> A3["Đọc nội dung nhóm dẫn đầu · S3<br/>bio + sản phẩm đã bán + tiêu đề video"]
         A3 --> A4["Xem khung hình video · S4<br/>4 khung/video, KHÔNG có tiếng"]
         A4 --> A5["Chọn KOC trong ngân sách, chia tiền · S5<br/>mỗi lý do kèm bằng chứng"]
+        A5 --> A6["Thẻ bước S4 phát LẠI — chỉ còn video của KOC được chọn<br/>kèm tấm 4 khung hình AI đã nhìn"]
     end
 
     subgraph B ["② Hỏi về một KOC"]
@@ -22,6 +23,7 @@ flowchart TD
 
     subgraph C ["③ Tra cứu & xếp hạng"]
         C1["search_creators<br/>lọc theo sản phẩm, follower, doanh thu, MCN<br/>xếp theo doanh thu / tương tác / tăng trưởng"]
+        C1 --> C2["Đang có chiến dịch trong hội thoại?<br/>exclude_koc · update_criteria · deepen_koc (công cụ GHI)"]
     end
 
     subgraph D ["④ Ngoài dữ liệu Kalodata"]
@@ -29,7 +31,7 @@ flowchart TD
         D1 --> D2["WebSearch / WebFetch<br/>ưu tiên kênh chính chủ, báo chí Việt Nam"]
     end
 
-    A5 --> EV
+    A6 --> EV
     B1 --> EV
     C1 --> EV
     D2 --> EV

@@ -25,7 +25,7 @@
     "koc:tool": "tsx --conditions=react-server --env-file=.env.local scripts/koc-tool.ts",
     "koc:agent": "tsx --conditions=react-server --env-file=.env.local scripts/koc-agent.ts",
     "koc:chat": "tsx --conditions=react-server --env-file=.env.local scripts/koc-chat.ts",
-    "chat": "tsx --conditions=react-server --env-file=.env.local scripts/chat.ts",
+    "reset:test": "tsx --conditions=react-server --env-file=.env.local scripts/reset-test.ts",
     "bench": "tsx --conditions=react-server --env-file=.env.local scripts/bench.ts",
     "s5": "tsx --conditions=react-server --env-file=.env.local scripts/s5.ts",
     "top-kocs": "tsx --env-file=.env.local scripts/top-kocs.ts"

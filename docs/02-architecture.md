@@ -110,7 +110,7 @@ Người bán (brand mỹ phẩm) nhập yêu cầu chiến dịch → hệ th�
  ┌──────────────── MongoDB 8 (server 66.42.50.32) ────────────────┐
  │ creators · creator_metrics · products · creator_products ·     │
  │ videos · raw_responses (gốc, giữ vĩnh viễn = bằng chứng) ·     │
- │ stage_items (checkpoint) · campaigns · llm_cache · api_calls · │
+ │ stage_items (checkpoint) · campaigns · tola_chats · llm_cache ·│
  │ avatars · video_media · top_kocs                               │
  └─────────────────────────────────────────────────────────────────┘
    ▲ SSH tunnel tự nối lại: scripts/db-tunnel.ps1 (local 27117)  ✅
@@ -124,8 +124,8 @@ Người bán (brand mỹ phẩm) nhập yêu cầu chiến dịch → hệ th�
 
 | Thành phần | Vị trí | Trạng thái |
 |---|---|---|
-| UI: Nhà sáng tạo (bảng xếp hạng, lọc), Chi tiết KOC, Chiến dịch | `src/app/kocs`, `src/app/campaigns` | ✅ |
-| Modal "Chiến dịch mới" 2 bước (brief → xác nhận) | `src/components/deep-search-button.tsx`, `src/app/actions/campaign.ts` | ✅ |
+| UI: Nhà sáng tạo (bảng xếp hạng, lọc), Chi tiết KOC, trợ lý Tola | `src/app/kocs`, `src/app/tola` | ✅ |
+| Trợ lý **Tola** — một ô chat cho cả tuyển KOC lẫn hỏi về một KOC (`docs/13-tola.md`) | `src/app/api/tola/ask/route.ts`, `src/lib/tola-deep.ts`, `src/components/tola-chat.tsx` | ✅ |
 | Brief parser (S1) | `src/lib/brief-parser.ts`, `src/lib/brief.ts` | ✅ |
 | LLM gateway: Claude CLI, cache, đo token/chi phí | `src/lib/llm/claude.ts` | ✅ |
 | Crawler web Kalodata + checkpoint + nhịp an toàn | `scripts/crawl-web.ts`, `src/lib/kalodata/web-client.ts`, `src/lib/crawl/checkpoint.ts` | ✅ |
@@ -136,8 +136,8 @@ Người bán (brand mỹ phẩm) nhập yêu cầu chiến dịch → hệ th�
 | Phân tích video (S4) — 1 ảnh 4 khung/video, cache theo video + nội dung + model + prompt | `src/lib/pipeline/s4-video.ts`, `src/lib/media/frames.ts`, `/api/frames/[id]` | ✅ |
 | Xếp hạng + lý do (S5) | `src/lib/pipeline/s5-recommend.ts`, `src/lib/evidence/validate.ts` | ✅ đo: $0,004 / chiến dịch 5 KOC, 0 lý do bị loại |
 | Validator bằng chứng | `src/lib/evidence/validate.ts` | ⬜ |
-| Số liệu kênh một nguồn (P1) + công cụ agent hỏi KOC (P2, evidence theo phiên) — `docs/10-koc-agent.md` | `src/lib/koc-data/facts.ts`, `src/lib/koc-data/tools.ts`, `npm run koc:tool`, MCP `scripts/koc-mcp.ts` (P3), `claudeAgent` trong `src/lib/llm/claude.ts` (P4), `src/lib/chat-creator-agent.ts` + `ToolTableView` trong `ask-bar.tsx` (P5, cờ `KOC_AGENT=1`); công cụ `analyze_videos` + chip nguồn (P5b); câu ngoài dữ liệu → WebSearch/WebFetch, kiểm link + số theo web đã đọc (P5c) | ✅ xong 2026-11-03 (P1–P5d, hiển thị kiểu ChatGPT; P7: chat chiến dịch `explain`/`web_info` dùng cùng agent + `campaign_context`, S2 dùng chung quy ước số liệu) · P6 benchmark để sau |
-| Trang kết quả + chi phí | `src/app/campaigns/[id]` | ⬜ |
+| Số liệu kênh một nguồn (P1) + công cụ agent hỏi KOC (P2, evidence theo phiên) — `docs/10-koc-agent.md` | `src/lib/koc-data/facts.ts`, `src/lib/koc-data/tools.ts`, `npm run koc:tool`, MCP `scripts/koc-mcp.ts` (P3), `claudeAgent` trong `src/lib/llm/claude.ts` (P4), `src/lib/chat-creator-agent.ts` + `ToolTableView` trong `ask-bar.tsx` (P5, cờ `KOC_AGENT=1`); công cụ `analyze_videos` + chip nguồn (P5b); câu ngoài dữ liệu → WebSearch/WebFetch, kiểm link + số theo web đã đọc (P5c) | ✅ xong 2026-11-03 (P1–P5d, hiển thị kiểu ChatGPT; P7: gộp hết vào trợ lý Tola — xem `docs/13-tola.md`) · P6 benchmark để sau |
+| Trang kết quả + chi phí | ❌ bỏ — kết quả trả thẳng trong hội thoại Tola, kèm thẻ từng bước (`docs/13-tola.md`) |
 
 ## 5. Ước tính chi phí AI cho 1 chiến dịch (MVP)
 
