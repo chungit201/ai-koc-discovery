@@ -120,6 +120,7 @@ export async function* runDeepSearch(prompt: string): AsyncGenerator<AskEvent, s
    * không, điểm demo, ghi chú từng khung hình và chính tấm 4 khung hình đó. Xem xong mà không cho
    * người bán thấy gì thì bước này vô nghĩa với họ.
    */
+  const videoStep = planned.has("analyse_videos") ? step : null;
   yield* stage(
     "analyse_videos",
     () => runS4(id),
@@ -134,6 +135,26 @@ export async function* runDeepSearch(prompt: string): AsyncGenerator<AskEvent, s
     () => runS5(id),
     (c) => (c.s5 ? `Chọn ${c.s5.picks.length} KOC, phân bổ ${(c.s5.allocated / 1e6).toLocaleString("vi-VN")} triệu (ước tính)` : "xong"),
   );
+
+  /**
+   * Phát LẠI thẻ bước xem video, giờ chỉ giữ video của những người THỰC SỰ được chọn. Lúc S4 chạy
+   * xong chưa biết ai được chọn (S5 chạy sau), nên thẻ ban đầu mang cả 10 KOC — mà người bán chỉ cần
+   * bằng chứng cho 5 người họ sắp trả tiền. Giao diện gán theo chỉ số bước nên lần phát sau ghi đè
+   * lần đầu, cả ở lượt đang chạy lẫn bản lưu trong `tola_chats`.
+   */
+  if (videoStep !== null) {
+    const c = ((await db.collection(C.campaigns).findOne({ _id: id as never }, { projection: { s4: 1 } })) ?? {}) as { s4?: { videos: number; kocs: number } };
+    const rows = await campaignVideoRows(id, { pickedOnly: true }).catch(() => []);
+    if (rows.length)
+      yield {
+        type: "step_done",
+        index: videoStep,
+        detail: `Đã xem ${c.s4?.videos ?? rows.length} video của ${c.s4?.kocs ?? "?"} KOC để sàng lọc; dưới đây là ${rows.length} video của ${
+          new Set(rows.map((r) => r.creator_id)).size
+        } KOC được chọn (4 khung hình/video, không có tiếng)`,
+        payload: { table: { tool: "campaign_videos", rows } },
+      };
+  }
 
   await db.collection(C.campaigns).updateOne({ _id: id as never }, { $set: { "pipeline.stage": "done", "pipeline.finished_at": new Date() } });
   return id;
