@@ -743,7 +743,20 @@ interface CampaignRow extends Record<string, unknown> {
   cost_max: number;
   evidence: string[];
   /** Video AI đã xem (4 khung hình/video, không có tiếng) — bằng chứng cho chất lượng review. */
-  videos: { video_id: string; title: string; product_match: boolean; product_demo: string; demo_score: number; production_quality: number; authenticity: number; video_score: number; summary: string }[];
+  videos: {
+    video_id: string;
+    title: string;
+    product_match: boolean;
+    /** Khớp sản phẩm theo đâu — sản phẩm gắn trong video là bằng chứng mạnh nhất, tiêu đề yếu nhất. */
+    match_by: string | null;
+    sold_product: string | null;
+    product_demo: string;
+    demo_score: number;
+    production_quality: number;
+    authenticity: number;
+    video_score: number;
+    summary: string;
+  }[];
 }
 
 /** Shortlist của chiến dịch kèm điểm, chi phí ước tính và bằng chứng — dùng chung cho `campaign_context` và `allocate_budget`. */
@@ -790,6 +803,8 @@ async function campaignRows(campaignId: string): Promise<{ camp: Record<string, 
         video_id: String(v.video_id),
         title: String(v.title ?? ""),
         product_match: Boolean(v.product_match),
+        match_by: (v.match_by as string) ?? null,
+        sold_product: (v.sold_product as string) ?? null,
         product_demo: String(v.product_demo ?? "không rõ"),
         demo_score: num(v.demo_score),
         production_quality: num(v.production_quality),
@@ -840,6 +855,9 @@ export async function campaignVideoRows(campaignId: string, opts: { pickedOnly?:
         title: String(v.title ?? ""),
         times: (v.times as number[]) ?? [],
         product_match: Boolean(v.product_match),
+        /** Khớp theo đâu: sản phẩm gắn trong video / khung hình / tiêu đề. `null` = không khớp. */
+        match_by: (v.match_by as string) ?? null,
+        sold_product: (v.sold_product as string) ?? null,
         product_demo: String(v.product_demo ?? "không rõ"),
         demo_score: num(v.demo_score),
         production_quality: num(v.production_quality),
@@ -906,7 +924,12 @@ async function campaignContext({ campaignId }: ToolCtx): Promise<Out> {
     r.videos.length
       ? `AI ĐÃ XEM ${r.videos.length} video: ${r.videos
           .slice(0, 2)
-          .map((v) => `“${v.title.slice(0, 50)}” — ${v.product_match ? "CÓ" : "KHÔNG"} thấy sản phẩm của chiến dịch, demo ${v.demo_score}/100, hình ${v.production_quality}/100, tự nhiên ${v.authenticity}/100: ${v.summary.slice(0, 110)}`)
+          .map(
+            (v) =>
+              `“${v.title.slice(0, 50)}” — ${
+                v.product_match ? `KHỚP sản phẩm chiến dịch (căn cứ: ${v.match_by}${v.sold_product ? ` — “${v.sold_product.slice(0, 50)}”` : ""})` : "KHÔNG khớp sản phẩm chiến dịch"
+              }, demo ${v.demo_score}/100, hình ${v.production_quality}/100, tự nhiên ${v.authenticity}/100: ${v.summary.slice(0, 110)}`,
+          )
           .join(" ; ")}. `
       : "CHƯA xem video của người này (không được đoán nội dung video). ";
   const head = (r: CampaignRow, i: number) =>

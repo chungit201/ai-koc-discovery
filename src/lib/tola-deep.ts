@@ -32,8 +32,22 @@ quick — tra cứu, xếp hạng, so sánh, hỏi về một KOC cụ thể, h�
 Mấu chốt: "deep" là khi họ sắp CHI TIỀN hợp tác và cần danh sách có bằng chứng; "quick" là khi họ
 chỉ muốn biết một con số hoặc một câu trả lời.`;
 
+/**
+ * Brief tuyển KOC nhận ra được **bằng code**: có động từ đi tìm + số lượng KOC, hoặc có ngân sách đi
+ * kèm từ "KOC". Đây là hàng rào chống chính sự bấp bênh của model: cùng một câu
+ * ("tìm 5 KOC TikTok … ngân sách 30 triệu") có lần Haiku trả "deep", có lần trả "quick" — mà trả
+ * "quick" thì cả pipeline S2→S5 không chạy, người bán nhận một câu tra cứu hời hợt thay vì danh sách
+ * có bằng chứng. Bắt được ở đây thì khỏi gọi model luôn: nhanh hơn, 0 token, và tất định.
+ */
+const FIND = /tìm|kiếm|cần|gợi ý|đề xuất|tuyển|book|chọn giúp|lên danh sách|shortlist/i;
+const HOW_MANY = /\b(\d{1,2})\s*(koc|kol|người|bạn|gương mặt|nhà sáng tạo|creator)\b/i;
+const BUDGET = /ngân sách|budget|\btriệu\b|\btr\b|\bvnđ?\b|\bvnd\b/i;
+const KOC_WORD = /\bkoc\b|\bkol\b|nhà sáng tạo|creator|tiktoker/i;
+export const looksLikeBrief = (text: string) => (FIND.test(text) && HOW_MANY.test(text)) || (BUDGET.test(text) && KOC_WORD.test(text) && FIND.test(text));
+
 /** Một câu hỏi có đáng chạy phân tích sâu (vài phút, vài chục cent) hay trả lời nhanh là đủ? */
 export async function classifyAsk(text: string): Promise<"deep" | "quick"> {
+  if (looksLikeBrief(text)) return "deep";
   try {
     const res = await claude({ system: CLASSIFY_SYSTEM, prompt: text, model: "haiku", purpose: "tola-classify" });
     return /deep/i.test(res.text.slice(0, 40)) ? "deep" : "quick";

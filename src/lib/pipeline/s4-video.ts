@@ -82,8 +82,10 @@ export async function analyseVideo(
 }
 
 /**
- * Which videos S4 looks at: top KOCs (S3 order, or S2 order for the early prefetch) × 2 videos —
- * best on-topic by views + best by revenue.
+ * Những video S4 đem đi xem: top KOC (xếp theo S3, hoặc S2 cho lượt tải khung hình sớm) × 2 video.
+ * Thứ tự ưu tiên trong mỗi KOC: video GẮN đúng sản phẩm chiến dịch (doanh thu rồi view) → tiêu đề
+ * khớp → doanh thu cao nhất → view cao nhất; cả 2 video đều lạc đề thì bù thêm 1 video gắn đúng
+ * sản phẩm (nếu có).
  */
 async function pickVideos(campaignId: string, crit: Criteria, order: "s3" | "s2", extraKocs = 0) {
   const db = await getDb();
@@ -103,17 +105,66 @@ async function pickVideos(campaignId: string, crit: Criteria, order: "s3" | "s2"
     ...ranked.filter((t) => asked.has(String(t.creator_id))),
     ...ranked.filter((t) => !asked.has(String(t.creator_id)) && !(t.cost_estimate?.min > cap)).slice(0, S4_KOCS(crit.koc_count) + extraKocs),
   ];
+  /**
+   * Tên sản phẩm gắn trong video (`videos.product_ids` → `products.name`). 86% video đã crawl có
+   * trường này nhưng S4 từng bỏ không dùng, chỉ khớp theo TIÊU ĐỀ — mà tiêu đề TikTok rất hay rỗng
+   * hoặc vu vơ ("Ai thấy góc nghiêng nó giống tôi ko?"), nên nửa số video đem đi xem bị lạc đề và
+   * KOC có video đúng sản phẩm vẫn bị kết luận "không có bằng chứng demo".
+   */
+  const vids = await db
+    .collection(C.videos)
+    .find({ creator_id: { $in: top.map((t) => t.creator_id) } })
+    .project<{ _id: string; creator_id: string; title?: string; views?: number; revenue?: number; product_ids?: string[] }>({ creator_id: 1, title: 1, views: 1, revenue: 1, product_ids: 1 })
+    .toArray();
+  const pids = [...new Set(vids.flatMap((v) => v.product_ids ?? []))];
+  const productNames = new Map(
+    (await db.collection(C.products).find({ _id: { $in: pids as never[] } }, { projection: { name: 1 } }).toArray()).map((p) => [String(p._id), String(p.name ?? "")]),
+  );
+  const soldProduct = (v: { product_ids?: string[] }) => (v.product_ids ?? []).map((id) => productNames.get(id) ?? "").find((n) => n && focus.test(n));
+
   const picks: Pick[] = [];
   for (const t of top) {
-    const vids = await db.collection(C.videos).find({ creator_id: t.creator_id }).project<{ _id: string; title?: string; views?: number; revenue?: number }>({ title: 1, views: 1, revenue: 1 }).toArray();
-    const byViews = [...vids].sort((a, b) => (b.views ?? 0) - (a.views ?? 0));
-    const chosen = [byViews.find((v) => focus.test(v.title ?? "")), [...vids].sort((a, b) => (b.revenue ?? 0) - (a.revenue ?? 0))[0], ...byViews];
+    const mine = vids.filter((v) => String(v.creator_id) === String(t.creator_id));
+    const byViews = [...mine].sort((a, b) => (b.views ?? 0) - (a.views ?? 0));
+    const byRevenue = [...mine].sort((a, b) => (b.revenue ?? 0) - (a.revenue ?? 0));
+    // Thứ tự ưu tiên: gắn ĐÚNG sản phẩm (doanh thu cao nhất, rồi view cao nhất) → tiêu đề khớp →
+    // doanh thu cao nhất → view cao nhất. Hai cái đầu là bằng chứng cho "họ có bán thứ này không",
+    // hai cái sau là bằng chứng cho "họ bán được hàng".
+    const chosen = [
+      byRevenue.find((v) => soldProduct(v)),
+      byViews.find((v) => soldProduct(v)),
+      byViews.find((v) => focus.test(v.title ?? "")),
+      byRevenue[0],
+      ...byViews,
+    ];
     const seen = new Set<string>();
     for (const v of chosen) {
       if (!v || seen.has(String(v._id))) continue;
       seen.add(String(v._id));
-      picks.push({ creator_id: String(t.creator_id), video_id: String(v._id), title: String(v.title ?? "").slice(0, 150), views: v.views ?? 0 });
+      picks.push({
+        creator_id: String(t.creator_id),
+        video_id: String(v._id),
+        title: String(v.title ?? "").slice(0, 150),
+        views: v.views ?? 0,
+        sold_product: soldProduct(v) ?? null,
+      });
       if (seen.size >= VIDEOS_PER_KOC) break;
+    }
+    /**
+     * Cả hai video đều lạc đề nhưng KOC vẫn có video gắn đúng sản phẩm → xem thêm đúng một video đó.
+     * Chỉ tốn tiền ở trường hợp thật sự cần: thà trả thêm ~$0,018 còn hơn kết luận sai rằng người này
+     * chưa từng demo sản phẩm của chiến dịch.
+     */
+    if (crit.product_focus && !picks.filter((p) => p.creator_id === String(t.creator_id)).some((p) => p.sold_product)) {
+      const extra = byRevenue.find((v) => soldProduct(v) && !seen.has(String(v._id)));
+      if (extra)
+        picks.push({
+          creator_id: String(t.creator_id),
+          video_id: String(extra._id),
+          title: String(extra.title ?? "").slice(0, 150),
+          views: extra.views ?? 0,
+          sold_product: soldProduct(extra) ?? null,
+        });
     }
   }
   return { top, picks };
@@ -139,6 +190,8 @@ interface Pick {
   video_id: string;
   title: string;
   views: number;
+  /** Tên sản phẩm gắn trong video mà khớp yêu cầu chiến dịch (`null` = video không bán thứ đó). */
+  sold_product: string | null;
 }
 
 export async function runS4(campaignId: string) {
@@ -178,15 +231,27 @@ export async function runS4(campaignId: string) {
   // ── Campaign-specific scoring by code + evidence ──
   const short = campaignId.slice(0, 8);
   const evidence: Record<string, unknown>[] = [];
-  const perKoc = new Map<string, { score: number; videos: { video_id: string; title: string; a: VideoAnalysis; times: number[]; match: boolean; score: number }[] }>();
+  const perKoc = new Map<
+    string,
+    { score: number; videos: { video_id: string; title: string; a: VideoAnalysis; times: number[]; match: boolean; match_by: string | null; sold_product: string | null; score: number }[] }
+  >();
   for (const pk of picks) {
     const r = results.get(pk.video_id);
     if (!r) continue;
     const a = r.result;
-    const match = a.products_seen.some((p) => focus.test(p)) || focus.test(pk.title);
+    /**
+     * Khớp bằng gì — ba mức, mạnh dần theo thứ tự ngược lại: sản phẩm GẮN trong video (dữ liệu bán
+     * hàng, chắc nhất), khung hình AI NHÌN THẤY, rồi mới tới tiêu đề. Phải ghi lại chứ không gộp làm
+     * một `true/false`: một video tiêu đề có "#kcn" nhưng trong khung hình toàn son thì vẫn tính là
+     * khớp, và người bán xứng đáng được biết nó khớp theo kiểu nào.
+     */
+    const seenMatch = a.products_seen.some((p) => focus.test(p));
+    const titleMatch = focus.test(pk.title);
+    const matchBy = pk.sold_product ? "sản phẩm gắn trong video" : seenMatch ? "khung hình AI nhìn thấy" : titleMatch ? "tiêu đề video" : null;
+    const match = matchBy !== null;
     const vScore = Math.min(100, 0.4 * a.demo_score + 0.3 * a.production_quality + 0.3 * a.authenticity);
     const k = perKoc.get(pk.creator_id) ?? { score: 0, videos: [] };
-    k.videos.push({ video_id: pk.video_id, title: pk.title, a, times: r.times, match, score: vScore });
+    k.videos.push({ video_id: pk.video_id, title: pk.title, a, times: r.times, match, match_by: matchBy, sold_product: pk.sold_product, score: vScore });
     perKoc.set(pk.creator_id, k);
 
     const best = a.frames.find((f) => /thoa|thử|cầm|cận|demo|bôi|swatch|texture|kết cấu/i.test(f.note)) ?? a.frames[0];
@@ -244,7 +309,16 @@ export async function runS4(campaignId: string) {
               s4: r.k
                 ? {
                     score: Math.round(r.k.score * 10) / 10,
-                    videos: r.k.videos.map((v) => ({ video_id: v.video_id, title: v.title, times: v.times, product_match: v.match, video_score: Math.round(v.score), ...v.a })),
+                    videos: r.k.videos.map((v) => ({
+                      video_id: v.video_id,
+                      title: v.title,
+                      times: v.times,
+                      product_match: v.match,
+                      match_by: v.match_by,
+                      sold_product: v.sold_product,
+                      video_score: Math.round(v.score),
+                      ...v.a,
+                    })),
                   }
                 : null,
               s4_total: r.final,

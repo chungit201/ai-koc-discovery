@@ -1037,7 +1037,13 @@ function ToolTableView({ table, handle, compact: small }: { table: ToolTable; ha
                   <p className="num mt-0.5 text-[11.5px] text-ink-muted">
                     {v.views !== undefined && <>{compact(n(v.views))} view · {vnd(n(v.revenue))}</>}
                     {s(v.product) && <> · gắn {s(v.product).slice(0, 40)}</>}
-                    {v.product_match !== undefined && <>{v.product_match ? "Có" : "Không"} thấy sản phẩm của chiến dịch trong khung hình</>}
+                    {s(v.sold_product) && <> · gắn “{s(v.sold_product).slice(0, 48)}”</>}
+                    {v.product_match !== undefined &&
+                      (v.product_match ? (
+                        <>Khớp sản phẩm chiến dịch · căn cứ: {s(v.match_by)}</>
+                      ) : (
+                        <>Không khớp sản phẩm của chiến dịch</>
+                      ))}
                   </p>
                   <p className="mt-1 flex flex-wrap gap-1 text-[11px]">
                     <span className={`rounded px-1.5 py-px ${v.product_demo === "có" ? "bg-emerald-50 text-emerald-700" : "bg-zinc-100 text-zinc-600"}`}>
