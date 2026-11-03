@@ -8,7 +8,6 @@ import { analyseVideo } from "../pipeline/s4-video";
 import { topBrand } from "../evidence/creator";
 import { categoryBreakdown, channelTotals, denominator, productFacts, UNCATEGORISED, type CategoryLevel } from "./facts";
 import { EXCLUDE_LABELS, focusPattern } from "../scoring/rules";
-import { createCampaignFromBrief } from "../campaign-create";
 
 /**
  * Bộ công cụ cho agent hỏi đáp về KOC (docs/10-koc-agent.md, P2). Mỗi hàm **chỉ đọc DB**, trả
@@ -118,7 +117,24 @@ async function listProducts({ creatorId }: ToolCtx, args: Args): Promise<Out> {
   const [t, products] = await Promise.all([channelTotals(creatorId), productFacts(creatorId)]);
   const { revenue: denom, coverage } = denominator(t, products);
   const base = coverage === null ? "tổng sản phẩm đã thu thập" : "doanh thu kênh";
-  const top = products.slice(0, limit);
+
+  /**
+   * Lọc theo loại sản phẩm. Không có tham số này thì công cụ luôn trả TOP THEO DOANH THU của cả
+   * kênh — hỏi về kem chống nắng mà bảng toàn cushion, phấn mắt, son, trông như lỗi. Dùng chung
+   * `focusPattern` với S2 nên cùng bảng đồng nghĩa.
+   */
+  const want = String(args.product ?? "").trim();
+  const re = want ? focusPattern(COSMETICS_SCOPE, want) : null;
+  const matched = re ? products.filter((p) => re.test(p.name ?? "")) : products;
+  const top = matched.slice(0, limit);
+  if (re && !top.length)
+    return {
+      type: "product",
+      summary: `KOC này không có sản phẩm nào thuộc nhóm '${want}' trong ${products.length} sản phẩm đã thu thập. Doanh thu của họ đến từ nhóm khác — gọi lại không kèm product để xem họ bán gì.`,
+      rows: [],
+      numbers: { matched: 0, products_total: products.length },
+      source: { collection: C.creatorProducts, ref: creatorId },
+    };
   // Video đã gắn từng sản phẩm — bằng chứng "bán qua nội dung nào", như danh sách video của Kalopilot
   const vids = await db
     .collection(C.videos)
@@ -690,58 +706,6 @@ async function listCampaignsTool(_ctx: ToolCtx, _args: Args): Promise<Out> {
   };
 }
 
-// ── create_campaign ───────────────────────────────────────────────────────────
-/**
- * Giao một brief cho **pipeline chiến dịch** chạy, thay vì trợ lý tự trả lời bằng vài lần gọi
- * công cụ.
- *
- * Lý do tồn tại: `search_creators` chỉ lọc và xếp hạng theo số liệu có sẵn. Pipeline làm nhiều hơn
- * hẳn — chấm hơn nghìn KOC trên 7 tiêu chí có trọng số và sinh vài nghìn bằng chứng (0 token), rồi
- * AI đọc bio/sản phẩm/tiêu đề video của nhóm dẫn đầu, xem khung hình video để kiểm chứng cách demo
- * sản phẩm, và chia ngân sách kèm lý do có dẫn chứng. Trả lời brief bằng một lần tìm kiếm là bỏ phí
- * toàn bộ phần đó.
- *
- * Chạy mất vài phút nên công cụ trả về NGAY sau khi tạo; người bán theo dõi tiến độ ở trang chiến
- * dịch, và trợ lý sẽ tự viết nhận định mở đầu khi pipeline xong.
- */
-async function createCampaignTool(_ctx: ToolCtx, args: Args): Promise<Out> {
-  const prompt = String(args.prompt ?? "").trim();
-  if (prompt.length < 10) throw new Error("prompt phải là brief của người bán, ít nhất 10 ký tự — chép nguyên văn yêu cầu của họ");
-
-  const { id, criteria, plan, cost_usd } = await createCampaignFromBrief(prompt, "tola");
-  const steps = plan.steps.map((s) => s.capability);
-  const crit = [
-    criteria.product_focus ? `sản phẩm '${criteria.product_focus}'` : null,
-    `${criteria.koc_count} KOC`,
-    criteria.budget_total ? `ngân sách ${vnd(criteria.budget_total)}` : "chưa có ngân sách",
-    criteria.audience_gender === "female" ? "khán giả nữ" : criteria.audience_gender === "male" ? "khán giả nam" : null,
-    criteria.audience_ages.length ? `tuổi ${criteria.audience_ages.join("/")}` : null,
-    criteria.mcn === "no" ? "chưa ký MCN" : criteria.mcn === "yes" ? "đã ký MCN" : null,
-  ]
-    .filter(Boolean)
-    .join(", ");
-
-  const STEP_TEXT: Record<string, string> = {
-    score_fit: "lọc & chấm điểm toàn bộ pool theo 7 tiêu chí (0 token)",
-    screen_content: "AI đọc bio, sản phẩm đã bán và tiêu đề video của nhóm dẫn đầu",
-    analyse_videos: "AI xem khung hình video để kiểm chứng cách demo sản phẩm",
-    recommend: "chọn KOC trong ngân sách, chia tiền và viết lý do kèm bằng chứng",
-  };
-
-  return {
-    type: "metric",
-    summary:
-      `Đã tạo chiến dịch ${id} từ brief, pipeline đang chạy nền. Tiêu chí hiểu được: ${crit}. ` +
-      `Các bước sẽ chạy: ${steps.map((s, i) => `${i + 1}) ${STEP_TEXT[s] ?? s}`).join("; ")}. ` +
-      `Mất vài phút. Hãy báo người bán rằng chiến dịch đang chạy, nói rõ các bước trên, và chỉ họ mở trang /campaigns/${id} để xem tiến độ cùng kết quả đầy đủ — ` +
-      `ĐỪNG tự liệt kê KOC ở đây, pipeline mới là nơi cho ra danh sách có bằng chứng.`,
-    rows: [{ campaign_id: id, product_focus: criteria.product_focus, koc_count: criteria.koc_count, budget_total: criteria.budget_total, steps: steps.join(" → ") }],
-    numbers: { koc_count: criteria.koc_count, ...(criteria.budget_total ? { budget_total: criteria.budget_total } : {}) },
-    cost_usd,
-    source: { collection: C.campaigns, ref: id },
-  };
-}
-
 // ── campaign_context ──────────────────────────────────────────────────────────
 const SCORE_LABEL: Record<string, string> = {
   performance: "hiệu suất",
@@ -1037,8 +1001,12 @@ export const KOC_TOOLS: ToolSpec[] = [
   },
   {
     name: "list_products",
-    description: "Top sản phẩm theo doanh thu: tên đầy đủ, danh mục cấp 1/2/3, giá, số đơn, doanh thu, % doanh thu kênh, số video gắn sản phẩm; kèm độ phủ dữ liệu và tầm giá.",
-    input_schema: obj({ limit: { type: "integer", minimum: 1, maximum: 50, default: 10 } }),
+    description:
+      "Top sản phẩm theo doanh thu: tên đầy đủ, danh mục cấp 1/2/3, giá, số đơn, doanh thu, % doanh thu kênh, số video gắn sản phẩm; kèm độ phủ dữ liệu và tầm giá. Truyền `product` để CHỈ lấy sản phẩm thuộc nhóm đang quan tâm (vd 'kem chống nắng') — bỏ trống sẽ trả top cả kênh, dễ lạc đề.",
+    input_schema: obj({
+      limit: { type: "integer", minimum: 1, maximum: 50, default: 10 },
+      product: { type: "string", description: "Lọc theo nhóm sản phẩm, vd 'kem chống nắng' / 'phấn nền' / 'serum'" },
+    }),
     run: listProducts,
   },
   {
@@ -1093,13 +1061,6 @@ export const KOC_TOOLS: ToolSpec[] = [
       include_seller_accounts: { type: "boolean", default: false },
     }),
     run: searchCreators,
-  },
-  {
-    name: "create_campaign",
-    description:
-      "GIAO BRIEF CHO PIPELINE CHIẾN DỊCH. Dùng khi người bán đưa ra một yêu cầu tuyển KOC thật sự — nêu sản phẩm cần quảng bá, và/hoặc số KOC, ngân sách, khán giả mục tiêu. Pipeline chấm điểm toàn bộ pool theo 7 tiêu chí, AI đọc nội dung từng KOC, xem khung hình video, rồi chia ngân sách kèm lý do có dẫn chứng — sâu hơn hẳn một lần search_creators. Chạy vài phút, trả về ngay sau khi tạo.",
-    input_schema: obj({ prompt: { type: "string", description: "Chép NGUYÊN VĂN yêu cầu của người bán, đừng tóm tắt lại" } }, ["prompt"]),
-    run: createCampaignTool,
   },
   {
     name: "list_campaigns",

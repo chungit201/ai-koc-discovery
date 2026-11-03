@@ -53,16 +53,3 @@ export async function createCampaignFromBrief(prompt: string, queuedBy?: string)
 
   return { id, criteria, plan, cost_usd: parsed.usage.cost_usd };
 }
-
-/**
- * Chiến dịch do trợ lý tạo mà chưa ai chạy pipeline. Gọi từ tiến trình Next (nơi sống đủ lâu) ngay
- * sau khi lượt hỏi kết thúc. `runPipeline` tự có lease nên gọi trùng cũng vô hại.
- */
-export async function pendingTolaCampaigns(): Promise<string[]> {
-  const db = await getDb();
-  const docs = await db
-    .collection(C.campaigns)
-    .find({ "pipeline.queued_by": "tola", "pipeline.runs_started_at": { $exists: false } }, { projection: { _id: 1 } })
-    .toArray();
-  return docs.map((d) => String(d._id));
-}

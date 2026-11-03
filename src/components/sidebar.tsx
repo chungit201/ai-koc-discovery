@@ -1,16 +1,16 @@
 "use client";
 
-import { ScanSearch, Sparkles, Users } from "lucide-react";
+import { Sparkles, Users } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { DeepSearchButton } from "./deep-search-button";
 import { TolaMark } from "./tola-mark";
 import { AI_NAME } from "@/lib/brand";
 
-const NAV = [
-  { href: "/kocs", label: "Nhà sáng tạo", icon: Users },
-  { href: "/campaigns", label: "Chiến dịch", icon: ScanSearch },
-];
+/**
+ * Hai mục điều hướng. Trang chiến dịch đã bỏ — tuyển KOC giờ là một câu hỏi gõ vào trợ lý, nên lối
+ * vào duy nhất cho việc đó là nút Tola ở giữa thanh tab (mobile) / mục "Hỏi Tola" (desktop).
+ */
+const NAV = [{ href: "/kocs", label: "Nhà sáng tạo", icon: Users }];
 
 export function Sidebar() {
   const path = usePathname();
@@ -54,9 +54,6 @@ export function Sidebar() {
           </span>
           Hỏi {AI_NAME}
         </Link>
-        <div className="pt-3">
-          <DeepSearchButton />
-        </div>
       </nav>
 
       <div className="border-t border-line px-6 py-4 text-xs text-ink-muted">
@@ -142,7 +139,8 @@ export function BottomNav() {
             <TolaFab active={path.startsWith("/tola")} />
           </div>
         </div>
-        {tab(NAV[1])}
+        {/* Chỉ còn một mục dữ liệu nên bên phải để trống cho cân với bên trái */}
+        <span className="flex-1" aria-hidden />
       </div>
     </nav>
   );

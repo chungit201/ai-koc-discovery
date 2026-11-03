@@ -9,7 +9,7 @@ export const metadata = { title: `${AI_NAME} · DETOLA AI` };
  */
 export default function TolaPage() {
   return (
-    <main className="flex min-h-screen flex-col">
+    <main className="flex flex-1 flex-col">
       <TolaChat />
     </main>
   );

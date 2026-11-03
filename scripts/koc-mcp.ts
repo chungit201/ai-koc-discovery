@@ -62,16 +62,7 @@ function toText(r: ToolResult): string {
 }
 
 /** Công cụ không đọc dữ liệu của riêng một KOC → không chèn `creator_id`. */
-const GLOBAL_TOOLS = new Set(["search_creators", "list_campaigns", "create_campaign"]);
-/**
- * Công cụ GHI dữ liệu — chỉ lượt hỏi của trợ lý Tola mới được phép, bật bằng `KOC_CAN_CREATE=1`.
- *
- * Thiếu rào này thì agent viết nhận định mở đầu (câu hỏi của nó chính là brief của chiến dịch) sẽ
- * gọi `create_campaign` và đẻ ra một chiến dịch TRÙNG, rồi mô tả nó là "đang chạy" thay vì báo cáo
- * kết quả thật của chiến dịch vừa xong. Đã xảy ra một lần trong lúc thử.
- */
-const WRITE_TOOLS = new Set(["create_campaign"]);
-const CAN_WRITE = process.env.KOC_CAN_CREATE === "1";
+const GLOBAL_TOOLS = new Set(["search_creators", "list_campaigns"]);
 /** Chỉ có nghĩa khi đang nói về một chiến dịch cụ thể. */
 const CAMPAIGN_TOOLS = new Set(["campaign_context", "allocate_budget"]);
 
@@ -98,18 +89,13 @@ async function handle(m: Msg): Promise<void> {
       return reply(id, {});
     case "tools/list":
       return reply(id, {
-        tools: KOC_TOOLS.filter((t) => (!CAMPAIGN_TOOLS.has(t.name) || CAMPAIGN) && (!WRITE_TOOLS.has(t.name) || CAN_WRITE)).map((t) => ({
-          name: t.name,
-          description: t.description,
-          inputSchema: withCreator(t.name, t.input_schema),
-        })),
+        tools: KOC_TOOLS.filter((t) => !CAMPAIGN_TOOLS.has(t.name) || CAMPAIGN).map((t) => ({ name: t.name, description: t.description, inputSchema: withCreator(t.name, t.input_schema) })),
       });
     case "tools/call": {
       const name = String(m.params?.name ?? "");
       const { creator_id, ...args } = (m.params?.arguments as Record<string, unknown>) ?? {};
       try {
         if (!SESSION) throw new Error("Thiếu KOC_SESSION");
-        if (WRITE_TOOLS.has(name) && !CAN_WRITE) throw new Error(`Lượt này không được phép tạo/sửa dữ liệu — ${name} chỉ dùng được ở màn trợ lý Tola`);
         // Công cụ đọc dữ liệu một KOC mà không có id nào để mặc định → bảo agent đi tìm trước
         const creatorId = creator_id ? String(creator_id) : (CREATORS[0] ?? "");
         if (!creatorId && !GLOBAL_TOOLS.has(name) && !CAMPAIGN_TOOLS.has(name) && name !== "calc")

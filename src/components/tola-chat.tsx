@@ -2,6 +2,7 @@
 
 import { ArrowUp, AtSign, Flame, Loader2, RefreshCw, X } from "lucide-react";
 import { useRef, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import type { ChatMessage } from "@/lib/chat";
 import type { AskEvent, StepKind, StepPayload } from "@/lib/chat-events";
 import { AI_NAME } from "@/lib/brand";
@@ -40,6 +41,8 @@ export function TolaChat({ initialMessages = [], threadId: initialThread }: { in
   const [tips, setTips] = useState(() => EXAMPLES.slice(0, 3));
   const taRef = useRef<HTMLTextAreaElement>(null);
   const busy = live !== null;
+  const router = useRouter();
+  const path = usePathname();
 
   const ask = async (text: string) => {
     const q = text.trim();
@@ -110,6 +113,15 @@ export function TolaChat({ initialMessages = [], threadId: initialThread }: { in
     } finally {
       setLive(null);
       setShowTips(false);
+      /**
+       * Câu đầu tiên của một luồng mới: đổi URL sang `/tola/<id>` và làm mới dữ liệu server để cột
+       * lịch sử bên trái hiện hội thoại này. `replace` chứ không `push` — người dùng bấm back phải
+       * ra khỏi trợ lý, không quay về màn trống cùng một luồng.
+       */
+      if (path === "/tola") {
+        window.history.replaceState(null, "", `/tola/${id}`);
+        router.refresh();
+      } else router.refresh();
     }
   };
 

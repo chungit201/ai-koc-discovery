@@ -216,6 +216,29 @@ export async function searchKocs(f: KocFilters): Promise<{ rows: KocRow[]; total
   return { rows, total: res?.total[0]?.n ?? 0, scope };
 }
 
+// ── Tola (trợ lý) ────────────────────────────────────────────────────────────
+
+export interface TolaThreadView {
+  id: string;
+  title: string;
+  updated_at: Date;
+}
+
+/** Danh sách hội thoại với trợ lý, mới nhất trước — dựng thanh lịch sử bên trái. */
+export async function listTolaThreads(limit = 40): Promise<TolaThreadView[]> {
+  const db = await getDb();
+  const rows = await db.collection(C.tolaChats).find({}, { projection: { title: 1, updated_at: 1 } }).sort({ updated_at: -1 }).limit(limit).toArray();
+  return rows.map((t) => ({ id: String(t._id), title: String(t.title ?? "Hội thoại"), updated_at: (t.updated_at as Date) ?? new Date() }));
+}
+
+/** Một hội thoại cụ thể; `null` khi id không tồn tại. */
+export async function getTolaThread(id: string): Promise<{ id: string; title: string; messages: ChatMessage[] } | null> {
+  const db = await getDb();
+  const t = await db.collection(C.tolaChats).findOne({ _id: id as never });
+  if (!t) return null;
+  return { id, title: String(t.title ?? "Hội thoại"), messages: ((t.messages as ChatMessage[]) ?? []).slice(-60) };
+}
+
 // ── Campaigns (deep-search briefs) ───────────────────────────────────────────
 
 export interface CampaignView {

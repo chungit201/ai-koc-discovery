@@ -278,64 +278,6 @@ export async function handleTurn(campaignId: string, text: string, opts: { dryRu
 }
 
 /**
- * Câu trả lời MỞ ĐẦU của chiến dịch — do agent viết, thay cho đoạn văn hard-code cũ trên trang
- * ("Từ 1.012 KOC, có 319 KOC đạt tiêu chí. Dưới đây là 5 KOC dẫn đầu…"). Đoạn đó cố định, không
- * bao giờ đổi theo yêu cầu, không có chính kiến và không nói đã loại ai — chính là chỗ người bán
- * thấy "cứng ngắt" nhất vì nó là màn hình ĐẦU TIÊN họ đọc.
- *
- * Gọi một lần ở cuối pipeline (`pipeline/run.ts`), chỉ khi chiến dịch chưa có lượt trả lời nào.
- */
-export async function writeOpeningAnswer(campaignId: string): Promise<boolean> {
-  if (!agentEnabled()) return false;
-  const db = await getDb();
-  const col = db.collection(C.campaigns);
-  const camp = await col.findOne({ _id: campaignId as never });
-  if (!camp) return false;
-  if (((camp.messages as ChatMessage[]) ?? []).some((m) => m.role === "assistant")) return false;
-
-  const shortlistIds = (
-    await db.collection(C.campaignScores).find({ campaign_id: campaignId, shortlisted: true }, { projection: { creator_id: 1 } }).toArray()
-  ).map((r) => String(r.creator_id));
-  if (!shortlistIds.length) return false;
-  const creators = await db
-    .collection(C.creators)
-    .find({ _id: { $in: shortlistIds as never[] } }, { projection: { handle: 1, nickname: 1 } })
-    .toArray();
-  const nameOf = new Map(creators.map((c) => [String(c._id), String(c.nickname || c.handle || c._id)]));
-
-  // Chính yêu cầu gốc của người bán là câu hỏi — agent trả lời đúng cái họ đã gõ, không phải một
-  // câu mẫu do code bịa ra.
-  const question = String(camp.prompt ?? "").trim() || `Tìm ${camp.koc_count ?? 5} KOC phù hợp nhất cho chiến dịch ${String(camp.category_name ?? "")}`;
-  const out = await collectAgent(analyseCampaignAgent(campaignId, question, [], shortlistIds, nameOf));
-  if (!out.markdown && !out.blocks.length) return false;
-
-  await col.updateOne(
-    { _id: campaignId as never },
-    {
-      $push: {
-        messages: {
-          id: randomUUID(),
-          role: "assistant",
-          text: out.reply,
-          intent: "explain",
-          reruns: [],
-          reasons: out.reasons,
-          agent: true,
-          opening: true,
-          blocks: out.blocks,
-          markdown: out.markdown,
-          unverified: out.unverified,
-          steps: out.steps,
-          follow_ups: out.follow_ups,
-          created_at: new Date(),
-        },
-      } as never,
-    },
-  );
-  return true;
-}
-
-/**
  * Tóm tắt **kết luận hiện có của chiến dịch** để mọi lượt chat đều có cùng ngữ cảnh: đã chạy tới
  * bước nào, chọn ai, điểm và ngân sách ra sao, S3 nhận xét gì, S4 đã xem video của ai. Không có
  * khối này thì AI trả lời như chưa từng chạy chiến dịch ("KOC nào?", "xong chưa?" không biết đáp).

@@ -10,6 +10,7 @@ const TARGETS = [
   C.llmCache,
   C.aiAssessments,
   C.creatorChats,
+  C.tolaChats,
 ];
 
 const apply = process.argv.includes("--yes");

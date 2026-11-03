@@ -4,7 +4,8 @@ import { Avatar } from "@/components/avatar";
 import { Sparkline } from "@/components/charts/sparkline";
 import { FilterSelect } from "@/components/filter-select";
 import { FilterDrawer } from "@/components/filter-drawer";
-import { DeepSearchButton } from "@/components/deep-search-button";
+import { TolaMark } from "@/components/tola-mark";
+import { AI_NAME } from "@/lib/brand";
 import { KocActions } from "@/components/koc-actions";
 import { ScrollShadows } from "@/components/scroll-shadows";
 import { Delta, Pill, ShareBar } from "@/components/kit";
@@ -117,10 +118,13 @@ export default async function KocsPage({ searchParams }: { searchParams: Promise
             {scope ? `${CATEGORY_NAMES[scope.category_id] ?? scope.category_id} · dữ liệu 30 ngày gần nhất` : "Chưa có dữ liệu"}
           </p>
         </div>
-        {/* Dưới lg thanh điều hướng trên cùng đã có nút này — không hiện trùng */}
-        <div className="hidden lg:block">
-          <DeepSearchButton variant="header" />
-        </div>
+        {/* Dưới lg đã có nút trợ lý nổi giữa thanh tab — không hiện trùng */}
+        <Link
+          href="/tola"
+          className="hidden h-10 items-center gap-2 rounded-xl bg-gradient-to-b from-[#454cab] to-[#1b1d4d] px-4 text-[13px] font-semibold text-white shadow-[var(--shadow-pop)] transition hover:brightness-110 lg:flex"
+        >
+          <TolaMark size={16} /> Hỏi {AI_NAME}
+        </Link>
       </div>
 
       {/* ── Toolbar ──

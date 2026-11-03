@@ -508,8 +508,9 @@ function Bubble({ m, handle, onAsk }: { m: Shown; handle: string; onAsk: (q: str
 export function AgentMessage({ m, handle = "", onAsk }: { m: ChatMessage; handle?: string; onAsk: (q: string) => void }) {
   return (
     <div className="space-y-2">
-      {/* Quá trình xử lý thu gọn (như Kalopilot); chip nguồn bấm vào sẽ tự mở và cuộn tới đúng thẻ */}
-      <details className="group rounded-xl border border-line bg-zinc-50/60 px-3 py-2">
+      {/* Mở sẵn: đây là phần cho người bán thấy AI đã làm gì để tin con số phía dưới — bắt bấm mới
+          hiện thì phần lớn sẽ không ai bấm. Vẫn gập được nếu thấy dài. */}
+      <details open className="group rounded-xl border border-line bg-zinc-50/60 px-3 py-2">
         <summary className="cursor-pointer select-none text-[12.5px] font-medium text-ink-muted">
           Quá trình xử lý · {(m.steps ?? []).filter((s) => s.kind !== "conclusion").length} bước phân tích
         </summary>

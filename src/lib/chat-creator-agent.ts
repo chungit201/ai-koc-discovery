@@ -1,5 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
+import type { Db } from "mongodb";
 import { getDb } from "./db/mongo";
 import { C } from "./db/collections";
 import { claudeAgent } from "./llm/claude";
@@ -49,11 +50,8 @@ const INTRO_TOLA = `[${AGENT_PROMPT_VERSION}-tola] Bạn là Tola — trợ lý 
 Nguồn 1 (chính): công cụ mcp__koc__* — dữ liệu Kalodata đã thu thập vào DB, kỳ 30 ngày.
 Nguồn 2 (phụ): WebSearch / WebFetch — CHỈ khi câu hỏi nằm ngoài dữ liệu Kalodata (đời tư công khai, tiểu sử, thương hiệu riêng, tin tức, phốt…).
 
-BRIEF TUYỂN KOC → create_campaign, KHÔNG tự trả lời
-Người bán đưa ra một yêu cầu tuyển KOC thật sự — nêu SẢN PHẨM cần quảng bá, kèm một trong các thứ: số KOC cần, ngân sách, khán giả mục tiêu, yêu cầu về chất lượng nội dung/review — thì BẮT BUỘC gọi create_campaign với nguyên văn yêu cầu đó.
-Vì sao: pipeline chấm hơn nghìn KOC trên 7 tiêu chí có trọng số và sinh vài nghìn bằng chứng (0 token), rồi AI đọc bio/sản phẩm/tiêu đề video của nhóm dẫn đầu, XEM KHUNG HÌNH VIDEO để kiểm chứng cách demo sản phẩm, và chia ngân sách kèm lý do có dẫn chứng. Một lần search_creators chỉ lọc theo số liệu có sẵn — trả lời brief kiểu đó là bỏ phí toàn bộ phần phân tích sâu, và người bán nhận được câu trả lời kém hẳn.
-Sau khi gọi: báo đang chạy, nói rõ các bước, chỉ họ mở trang chiến dịch. ĐỪNG tự liệt kê KOC trong câu trả lời đó.
-Ngược lại, câu hỏi TRA CỨU thuần ("KOC nào doanh thu cao nhất", "ai đang tăng trưởng mạnh", "so A với B") thì dùng search_creators và trả lời thẳng — không tạo chiến dịch.
+BÁO CÁO KẾT QUẢ PHÂN TÍCH SÂU
+Khi ngữ cảnh cho biết vừa có một chiến dịch được phân tích xong (route đã chạy S2→S5 trước lượt này), hãy gọi campaign_context ĐẦU TIÊN rồi báo cáo KẾT QUẢ THẬT: ai được chọn, điểm bao nhiêu, ngân sách chia thế nào, bằng chứng nào chống đỡ. Đừng mô tả quy trình như thể nó đang chạy — nó xong rồi, người bán cần biết kết quả.
 
 BẮT ĐẦU TỪ ĐÂU
 - Câu hỏi có nhắc tên/handle KOC → phần ngữ cảnh bên dưới đã ghi sẵn creator_id, dùng thẳng.
@@ -113,6 +111,7 @@ CÁCH LÀM (câu hỏi về số liệu)
 1. Nghĩ ngắn: câu hỏi cần những số nào. Gọi công cụ — gọi SONG SONG các công cụ độc lập trong cùng một lượt.
 2. Đọc kết quả, thấy thiếu thì gọi tiếp (vd sản phẩm top có video gắn → list_videos với product_id).
 3. Hỏi về danh mục / sản phẩm / bán hàng: BẮT BUỘC đủ bộ — get_overview, category_breakdown level 1 VÀ level 2, list_products, list_videos (sort=revenue), analyze_videos (xem các video bán hàng tốt nhất: KOC có thật sự demo đúng sản phẩm không), get_peers để đối chuẩn.
+   Câu hỏi xoay quanh MỘT loại sản phẩm (kem chống nắng, phấn nền…) thì truyền tham số "product" vào list_products và vào search_creators. Bỏ trống sẽ ra top cả kênh — người bán hỏi kem chống nắng mà bảng toàn son với phấn mắt thì họ tưởng hệ thống lỗi.
    Hỏi doanh thu / ổn định: get_overview, get_daily, get_peers. Hỏi video: list_videos (views và revenue), analyze_videos, get_overview.
 4. Muốn nói một con số KHÔNG có sẵn trong kết quả (tổng, tỉ trọng, gấp bao nhiêu lần, chênh lệch) → PHẢI gọi calc với số lấy từ "numbers", rồi chép kết quả calc. Tự cộng/nhân/ước lượng trong đầu là SAI và câu đó sẽ bị xoá.
 5. TỰ KIỂM TRA trước khi viết: mỗi kết luận phải có ít nhất 2 bằng chứng độc lập chống đỡ (vd số liệu bán hàng + điều AI thấy trong video, hoặc số của KOC + đối chuẩn). Bằng chứng mâu thuẫn nhau thì nói rõ mâu thuẫn, không chọn phe. Điều chưa đủ dữ liệu thì nói "chưa đủ dữ liệu".
@@ -161,7 +160,7 @@ Nhận định từ analyze_videos là AI nhìn 4 khung hình, không nghe đư�
 
 const TITLES: Record<string, (input: Record<string, unknown>) => string> = {
   get_overview: () => "Lấy tổng quan kênh",
-  list_products: (i) => `Lấy danh sách top ${Number(i.limit) || 10} sản phẩm`,
+  list_products: (i) => (i.product ? `Lấy sản phẩm ${String(i.product)} đã bán` : `Lấy danh sách top ${Number(i.limit) || 10} sản phẩm`),
   category_breakdown: (i) => `Tính cơ cấu doanh thu theo danh mục cấp ${Number(i.level) || 2}`,
   list_videos: (i) => `Lấy danh sách video ${i.product_id ? "gắn sản phẩm" : ""} theo ${i.sort === "revenue" ? "doanh thu" : "lượt xem"}`.replace(/\s+/g, " "),
   get_daily: () => "Lấy doanh thu theo ngày",
@@ -247,6 +246,20 @@ function unknownLinks(markdown: string, web: WebCorpus): string[] {
   return [...new Set(urls.filter((u) => !/^(www\.)?tiktok\.com\/@/i.test(normUrl(u)) && !known.has(normUrl(u))))];
 }
 
+/**
+ * Tên KOC cho tiêu đề thẻ bước. Bản đồ `names` chỉ có những KOC được tag sẵn trong câu hỏi; KOC do
+ * agent TỰ TÌM bằng `search_creators` không nằm trong đó, nên trước đây hai thẻ "Lấy danh sách top
+ * 10 sản phẩm" liền nhau trông y hệt và không biết đang đọc của ai. Tra DB rồi nhớ lại trong map.
+ */
+async function nameOf(db: Db, creatorId: string, names?: Map<string, string>): Promise<string | undefined> {
+  const known = names?.get(creatorId);
+  if (known) return known;
+  const c = await db.collection(C.creators).findOne({ _id: creatorId as never }, { projection: { nickname: 1, handle: 1 } });
+  const name = c ? String(c.nickname || c.handle || creatorId) : undefined;
+  if (name) names?.set(creatorId, name);
+  return name;
+}
+
 const historyText = (messages: ChatMessage[]) =>
   messages
     .slice(-HISTORY_TURNS)
@@ -320,8 +333,6 @@ export async function* askTola(opts: {
     system: INTRO_TOLA + RULES,
     prompt: [opts.context ?? "", h ? `Hội thoại trước đó:\n${h}` : "", `Câu hỏi của người bán: ${opts.text}`],
     env: {
-      // Chỉ lượt Tola mới được tạo chiến dịch — xem WRITE_TOOLS trong scripts/koc-mcp.ts
-      KOC_CAN_CREATE: "1",
       ...(opts.mentioned?.length ? { KOC_CREATORS: opts.mentioned.map((m) => m.creator_id).join(",") } : {}),
       ...(opts.campaignId ? { KOC_CAMPAIGN: opts.campaignId } : {}),
     },
@@ -362,7 +373,7 @@ async function* runAgent(opts: {
         stepOf.set(ev.id, index);
         // URL trang agent tự đọc cũng là nguồn hợp lệ (kết quả WebFetch không lặp lại URL)
         if (ev.name === "WebFetch" && typeof ev.input.url === "string") pendingFetch.set(ev.id, [ev.input.url]);
-        const who = typeof ev.input.creator_id === "string" ? opts.names?.get(ev.input.creator_id) : undefined;
+        const who = typeof ev.input.creator_id === "string" ? await nameOf(db, ev.input.creator_id, opts.names) : undefined;
         yield { type: "step_add", title: `${(TITLES[ev.name] ?? (() => ev.name))(ev.input)}${who ? ` · ${who}` : ""}`, kind: KIND[ev.name] ?? "data" };
         yield { type: "step_start", index };
       } else if (ev.type === "tool_result") {

@@ -3,8 +3,7 @@ import { getDb } from "@/lib/db/mongo";
 import { C } from "@/lib/db/collections";
 import { askTola } from "@/lib/chat-creator-agent";
 import { mentionContext, resolveMentions } from "@/lib/mentions";
-import { pendingTolaCampaigns } from "@/lib/campaign-create";
-import { runPipeline } from "@/lib/pipeline/run";
+import { classifyAsk, runDeepSearch } from "@/lib/tola-deep";
 import type { ChatMessage } from "@/lib/chat";
 import type { AskEvent, StepKind, StepPayload } from "@/lib/chat-events";
 
@@ -41,10 +40,51 @@ export async function POST(req: Request) {
         const mentions = await resolveMentions(text);
         send({ type: "plan", steps: [], agent: true });
 
-        for await (const e of askTola({ text, history, mentioned: mentions.found, context: mentionContext(mentions), campaignId })) {
-          send(e);
+        /**
+         * Brief tuyển KOC → chạy phân tích sâu S2→S5 NGAY TRONG LƯỢT NÀY, phát tiến độ ra chat, rồi
+         * mới để agent viết nhận định từ `campaign_context`. Trước đây Tola chỉ tạo chiến dịch rồi
+         * đẩy người dùng sang trang khác — mất hẳn mạch hội thoại.
+         *
+         * Đếm bước phải cộng dồn: agent tự đánh số từ 0, nhưng ở đây các bước pipeline đã chiếm chỗ.
+         */
+        let deepCampaign: string | null = null;
+        if (!campaignId && (await classifyAsk(text)) === "deep") {
+          const deep = runDeepSearch(text);
+          for (;;) {
+            const n = await deep.next();
+            if (n.done) {
+              deepCampaign = n.value;
+              break;
+            }
+            const e = n.value;
+            send(e);
+            if (e.type === "step_add") steps.push({ title: e.title, detail: "", kind: e.kind });
+            else if (e.type === "step_done" && steps[e.index]) Object.assign(steps[e.index], { detail: e.detail });
+          }
+        }
+        const offset = steps.length;
+
+        const ctx = [
+          mentionContext(mentions),
+          deepCampaign
+            ? `Yêu cầu này VỪA được phân tích sâu xong (S2→S5 đã chạy, chiến dịch ${deepCampaign}). Gọi campaign_context trước rồi BÁO CÁO KẾT QUẢ THẬT — ai được chọn, điểm, ngân sách đã chia, bằng chứng. Đừng nói "đang chạy".`
+            : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+
+        for await (const e of askTola({
+          text,
+          history,
+          mentioned: mentions.found,
+          context: ctx,
+          campaignId: campaignId ?? deepCampaign ?? undefined,
+        })) {
+          // Dời chỉ số bước của agent xuống sau các bước pipeline đã phát ở trên
+          const shifted = e.type === "step_done" || e.type === "step_start" ? { ...e, index: e.index + offset } : e;
+          send(shifted);
           if (e.type === "step_add") steps.push({ title: e.title, detail: "", kind: e.kind });
-          else if (e.type === "step_done" && steps[e.index]) Object.assign(steps[e.index], { detail: e.detail, ...(e.payload ? { payload: e.payload } : {}) });
+          else if (e.type === "step_done" && steps[e.index + offset]) Object.assign(steps[e.index + offset], { detail: e.detail, ...(e.payload ? { payload: e.payload } : {}) });
           else if (e.type === "conclusion") {
             reply = e.text;
             markdown = e.markdown ?? "";
@@ -83,16 +123,6 @@ export async function POST(req: Request) {
         console.error("[tola] lưu hội thoại lỗi", err);
       }
 
-      /**
-       * Trợ lý vừa tạo chiến dịch thì KHỞI ĐỘNG PIPELINE ở đây — tiến trình MCP (nơi công cụ chạy)
-       * chết ngay sau lượt hỏi nên `void runPipeline()` bên đó sẽ bị giết giữa chừng. Tiến trình
-       * Next sống đủ lâu; `runPipeline` tự có lease nên gọi trùng cũng vô hại.
-       */
-      try {
-        for (const id of await pendingTolaCampaigns()) void runPipeline(id);
-      } catch (err) {
-        console.error("[tola] không khởi động được pipeline", err);
-      }
       controller.close();
     },
   });
