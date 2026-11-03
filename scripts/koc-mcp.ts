@@ -50,15 +50,24 @@ const MAX_ROWS = 30;
  * tiết. `numbers` thô không gửi: model cần chép số đã định dạng, còn số thô chỉ dùng để kiểm tra.
  */
 function toText(r: ToolResult): string {
-  const rows = r.rows.slice(0, MAX_ROWS);
-  return [
-    `evidence_id: ${r.evidence_id}`,
-    r.summary,
-    rows.length ? `rows (${rows.length}${r.rows.length > rows.length ? `/${r.rows.length}` : ""}): ${JSON.stringify(rows)}` : "",
-    `numbers (dùng làm input cho calc): ${JSON.stringify(r.numbers)}`,
-  ]
-    .filter(Boolean)
-    .join("\n");
+  /**
+   * Trần ký tự cho MỘT kết quả công cụ. Quá dài thì Claude CLI không đưa kết quả vào ngữ cảnh nữa mà
+   * đổ ra file kèm mấy dòng mô tả ("Format: Plain text") — agent coi như không nhận được gì và tự đi
+   * tìm nguồn khác. Thà cắt bớt hàng chi tiết còn hơn mất cả tóm tắt: tóm tắt và `numbers` là phần
+   * agent bắt buộc phải có, còn bảng trên giao diện lấy hàng từ bản ghi `evidence` trong DB chứ
+   * không lấy từ đoạn chữ này.
+   */
+  const LIMIT = 24_000;
+  const head = `evidence_id: ${r.evidence_id}\n${r.summary}`;
+  const tail = `\nnumbers (dùng làm input cho calc): ${JSON.stringify(r.numbers)}`;
+  let rows = r.rows.slice(0, MAX_ROWS);
+  let json = rows.length ? JSON.stringify(rows) : "";
+  while (rows.length > 1 && head.length + tail.length + json.length > LIMIT) {
+    rows = rows.slice(0, Math.ceil(rows.length / 2));
+    json = JSON.stringify(rows);
+  }
+  const rowsLine = rows.length ? `\nrows (${rows.length}${r.rows.length > rows.length ? `/${r.rows.length}, đã cắt cho gọn` : ""}): ${json}` : "";
+  return head + rowsLine + tail;
 }
 
 /** Công cụ không đọc dữ liệu của riêng một KOC → không chèn `creator_id`. */

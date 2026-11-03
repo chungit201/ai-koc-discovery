@@ -7,7 +7,7 @@ import type { ChatMessage } from "@/lib/chat";
 import type { AskEvent, StepKind, StepPayload } from "@/lib/chat-events";
 import { AI_NAME } from "@/lib/brand";
 import { TolaMark } from "@/components/tola-mark";
-import { AgentMessage, StepCard } from "@/components/ask-bar";
+import { AgentMessage, hasStepBody, StepBody, StepCard } from "@/components/ask-bar";
 
 type Shown = ChatMessage & { pending?: boolean };
 interface LiveStep {
@@ -159,7 +159,10 @@ export function TolaChat({ initialMessages = [], threadId: initialThread }: { in
             </div>
             <div className="space-y-2 rounded-2xl border border-line bg-white px-4 py-3">
               {live.steps.map((s, i) => (
-                <StepCard key={i} index={i} title={s.title} detail={s.detail} done={s.done} running={!s.done} animate />
+                <StepCard key={i} index={i} title={s.title} detail={s.detail} done={s.done} running={!s.done} animate>
+                  {/* Dẫn chứng của bước hiện NGAY lúc chạy: bảng kết quả công cụ, video AI đã xem, link web */}
+                  {hasStepBody(s.payload) ? <StepBody payload={s.payload} /> : undefined}
+                </StepCard>
               ))}
               {/**
                * Giữa thẻ công cụ cuối và câu trả lời có một khoảng 20–40 giây model viết bài mà

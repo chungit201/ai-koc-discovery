@@ -67,7 +67,8 @@ export async function POST(req: Request) {
             const e = n.value;
             send(e);
             if (e.type === "step_add") steps.push({ title: e.title, detail: "", kind: e.kind });
-            else if (e.type === "step_done" && steps[e.index]) Object.assign(steps[e.index], { detail: e.detail });
+            // Giữ cả `payload`: bước xem video mang theo dẫn chứng từng video, mất nó là thẻ trống
+            else if (e.type === "step_done" && steps[e.index]) Object.assign(steps[e.index], { detail: e.detail, ...(e.payload ? { payload: e.payload } : {}) });
           }
         }
         const offset = steps.length;

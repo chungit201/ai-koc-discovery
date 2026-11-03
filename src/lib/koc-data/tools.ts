@@ -742,6 +742,8 @@ interface CampaignRow extends Record<string, unknown> {
   cost_min: number;
   cost_max: number;
   evidence: string[];
+  /** Video AI đã xem (4 khung hình/video, không có tiếng) — bằng chứng cho chất lượng review. */
+  videos: { video_id: string; title: string; product_match: boolean; product_demo: string; demo_score: number; production_quality: number; authenticity: number; video_score: number; summary: string }[];
 }
 
 /** Shortlist của chiến dịch kèm điểm, chi phí ước tính và bằng chứng — dùng chung cho `campaign_context` và `allocate_budget`. */
@@ -781,11 +783,76 @@ async function campaignRows(campaignId: string): Promise<{ camp: Record<string, 
       breakout_rate: typeof s.breakout_rate === "number" ? s.breakout_rate : null,
       cost_min: num((s.cost_estimate as { min?: number })?.min),
       cost_max: num((s.cost_estimate as { max?: number })?.max),
-      evidence: ((s.evidence_ids as string[]) ?? []).map((e) => claims.get(e)).filter(Boolean) as string[],
+      // Cắt bớt: `rows` được gửi NGUYÊN cho model qua MCP, dài quá thì Claude CLI đổ kết quả ra
+      // file và agent không đọc được gì (đã gặp: campaign_context trả về "Format: Plain text").
+      evidence: (((s.evidence_ids as string[]) ?? []).map((e) => claims.get(e)).filter(Boolean) as string[]).slice(0, 5).map((c) => (c.length > 180 ? `${c.slice(0, 177)}…` : c)),
+      videos: ((s.s4?.videos ?? []) as Record<string, unknown>[]).slice(0, 3).map((v) => ({
+        video_id: String(v.video_id),
+        title: String(v.title ?? ""),
+        product_match: Boolean(v.product_match),
+        product_demo: String(v.product_demo ?? "không rõ"),
+        demo_score: num(v.demo_score),
+        production_quality: num(v.production_quality),
+        authenticity: num(v.authenticity),
+        video_score: num(v.video_score),
+        summary: String(v.summary ?? "").slice(0, 140),
+      })),
     };
   });
   rows.sort((a, b) => Number(b.picked) - Number(a.picked) || a.rank - b.rank);
   return { camp, rows, picks };
+}
+
+/**
+ * Mọi video AI đã xem trong một chiến dịch, kèm tên + handle của KOC. Đây là **bằng chứng gốc** cho
+ * câu "KOC này review sản phẩm thế nào": tiêu đề video, có thấy đúng sản phẩm hay không, điểm demo /
+ * hình ảnh / độ tự nhiên, ghi chú từng khung hình và mốc giây — giao diện vẽ cùng tấm 4 khung hình
+ * mà AI đã nhìn (`/api/frames/<video_id>`).
+ *
+ * Trước đây dữ liệu này chỉ nằm ở trang chiến dịch (đã bỏ); không đưa ra thì bước xem video chạy
+ * xong mà người bán không thấy gì — đúng như phản hồi "đọc xong không lấy dẫn chứng gì về video".
+ */
+export async function campaignVideoRows(campaignId: string, opts: { pickedOnly?: boolean } = {}): Promise<Record<string, unknown>[]> {
+  const db = await getDb();
+  const camp = await db.collection(C.campaigns).findOne({ _id: campaignId as never }, { projection: { s5: 1, excluded_creator_ids: 1 } });
+  const picked = new Set(((camp?.s5?.picks ?? []) as { creator_id: string }[]).map((p) => p.creator_id));
+  const scores = await db
+    .collection(C.campaignScores)
+    .find({ campaign_id: campaignId, "s4.videos.0": { $exists: true } })
+    .sort({ s4_rank: 1 })
+    .toArray();
+  const ids = scores.map((s) => String(s.creator_id));
+  const creators = new Map(
+    (await db.collection(C.creators).find({ _id: { $in: ids as never[] } }, { projection: { nickname: 1, handle: 1 } }).toArray()).map((c) => [String(c._id), c]),
+  );
+  const rows: Record<string, unknown>[] = [];
+  for (const s of scores) {
+    const id = String(s.creator_id);
+    if (opts.pickedOnly && picked.size && !picked.has(id)) continue;
+    const c = creators.get(id);
+    for (const v of (s.s4.videos ?? []) as Record<string, unknown>[]) {
+      rows.push({
+        creator_id: id,
+        creator_name: String(c?.nickname || c?.handle || id),
+        handle: String(c?.handle ?? "").replace(/^@/, ""),
+        picked: picked.has(id),
+        video_id: String(v.video_id),
+        title: String(v.title ?? ""),
+        times: (v.times as number[]) ?? [],
+        product_match: Boolean(v.product_match),
+        product_demo: String(v.product_demo ?? "không rõ"),
+        demo_score: num(v.demo_score),
+        production_quality: num(v.production_quality),
+        authenticity: num(v.authenticity),
+        video_score: num(v.video_score),
+        products_seen: (v.products_seen as string[]) ?? [],
+        frames: (v.frames as { i: number; note: string }[]) ?? [],
+        risks: (v.risks as string[]) ?? [],
+        summary: String(v.summary ?? ""),
+      });
+    }
+  }
+  return rows;
 }
 
 async function campaignContext({ campaignId }: ToolCtx): Promise<Out> {
@@ -816,7 +883,39 @@ async function campaignContext({ campaignId }: ToolCtx): Promise<Out> {
     if (r.breakout_rate !== null) numbers[`k${i + 1}_breakout_rate`] = r.breakout_rate;
     if (r.budget) numbers[`k${i + 1}_budget`] = r.budget;
     for (const [k, v] of Object.entries(r.scores)) numbers[`k${i + 1}_${k}`] = num(v);
+    // Số của phần xem video cũng phải vào `numbers`, nếu không câu "demo 85/100" sẽ bị đánh là bịa
+    r.videos.forEach((v, j) => {
+      numbers[`k${i + 1}_v${j + 1}_demo_score`] = v.demo_score;
+      numbers[`k${i + 1}_v${j + 1}_production_quality`] = v.production_quality;
+      numbers[`k${i + 1}_v${j + 1}_authenticity`] = v.authenticity;
+      numbers[`k${i + 1}_v${j + 1}_video_score`] = v.video_score;
+    });
   });
+  const analysed = rows.filter((r) => r.videos.length);
+  numbers.videos_analysed = analysed.reduce((a, r) => a + r.videos.length, 0);
+  /**
+   * Hai mức chi tiết. Tóm tắt này đi NGUYÊN qua MCP vào ngữ cảnh của model, dài quá thì Claude CLI
+   * đổ ra file và agent mất sạch dữ liệu — nên người ĐƯỢC CHỌN mới được tả kỹ (gồm bằng chứng video),
+   * còn dự phòng chỉ một dòng số đủ để so sánh và gọi tên khi cần thay người.
+   */
+  const videoText = (r: CampaignRow) =>
+    r.videos.length
+      ? `AI ĐÃ XEM ${r.videos.length} video: ${r.videos
+          .slice(0, 2)
+          .map((v) => `“${v.title.slice(0, 50)}” — ${v.product_match ? "CÓ" : "KHÔNG"} thấy sản phẩm của chiến dịch, demo ${v.demo_score}/100, hình ${v.production_quality}/100, tự nhiên ${v.authenticity}/100: ${v.summary.slice(0, 110)}`)
+          .join(" ; ")}. `
+      : "CHƯA xem video của người này (không được đoán nội dung video). ";
+  const head = (r: CampaignRow, i: number) =>
+    `#${i + 1} ${r.name} (id ${r.creator_id}${r.handle ? `, handle @${r.handle}` : ""}, ${r.picked ? `ĐƯỢC CHỌN, ngân sách ${vnd(r.budget)}` : "dự phòng"}): điểm ${r.total}; ${compact(r.followers)} follower; doanh thu mỹ phẩm ${vnd(r.revenue)}`;
+  const full = (r: CampaignRow, i: number) =>
+    `${head(r, i)}; ${Object.entries(r.scores)
+      .map(([k, v]) => `${SCORE_LABEL[k] ?? k} ${v}`)
+      .join(", ")}; ${r.growth_rate === null ? "chưa có số tăng trưởng" : `doanh thu ${r.growth_rate >= 0 ? "+" : ""}${p1(r.growth_rate)} so với kỳ trước`}; chi phí ước tính ${vnd(
+      r.cost_min,
+    )}–${vnd(r.cost_max)}/video. ${videoText(r)}Bằng chứng: ${r.evidence.slice(0, 4).join(" | ")}`;
+  const brief = (r: CampaignRow, i: number) =>
+    `${head(r, i)}; chi phí ước tính ${vnd(r.cost_min)}–${vnd(r.cost_max)}/video. ${r.videos.length ? `AI đã xem ${r.videos.length} video, ${r.videos.some((v) => v.product_match) ? "CÓ" : "KHÔNG"} thấy sản phẩm của chiến dịch` : "chưa xem video"}. Gọi deepen_koc nếu người bán muốn xem kỹ người này.`;
+
   const critText = Object.entries(crit)
     .filter(([, v]) => v !== null && v !== undefined && !(Array.isArray(v) && !v.length))
     .map(([k, v]) => `${k}=${Array.isArray(v) ? v.join("/") : typeof v === "number" && v >= 1e5 ? vnd(v) : String(v)}`)
@@ -830,16 +929,10 @@ async function campaignContext({ campaignId }: ToolCtx): Promise<Out> {
       `Mọi KOC trong danh sách dưới đây đều được Kalodata đánh dấu là nhà sáng tạo ĐỘC LẬP (tài khoản do chính nhà bán vận hành đã bị loại). ` +
       (camp.s5 ? `Đã chọn ${picks.length} KOC, chia ${vnd(num(camp.s5.allocated))}. ` : "Chưa chọn KOC/chia ngân sách. ") +
       `Điểm phù hợp 0-100 do code chấm (trọng số theo tiêu chí), KHÔNG được tính lại. ` +
-      rows
-        .map(
-          (r, i) =>
-            `#${i + 1} ${r.name} (id ${r.creator_id}${r.handle ? `, handle @${r.handle}` : ""}, ${r.picked ? `ĐƯỢC CHỌN, ngân sách ${vnd(r.budget)}` : "dự phòng"}): điểm ${r.total}; ${Object.entries(r.scores)
-              .map(([k, v]) => `${SCORE_LABEL[k] ?? k} ${v}`)
-              .join(", ")}; ${compact(r.followers)} follower; ${
-              r.growth_rate === null ? "chưa có số tăng trưởng" : `doanh thu ${r.growth_rate >= 0 ? "+" : ""}${p1(r.growth_rate)} so với kỳ trước`
-            }; chi phí ước tính ${vnd(r.cost_min)}–${vnd(r.cost_max)}/video. Bằng chứng: ${r.evidence.join(" | ")}`,
-        )
-        .join(" || "),
+      (analysed.length
+        ? `AI đã XEM ${numbers.videos_analysed} video của ${analysed.length} KOC (mỗi video 4 khung hình, KHÔNG có âm thanh) — phần "AI ĐÃ XEM" của từng người dưới đây là bằng chứng về cách họ review sản phẩm, PHẢI dùng trong câu trả lời. `
+        : "") +
+      rows.map((r, i) => (r.picked || !picks.length ? full(r, i) : brief(r, i))).join(" || "),
     rows,
     numbers,
     source: { collection: C.campaigns, ref: campaignId },

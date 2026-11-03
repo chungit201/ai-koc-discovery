@@ -1,0 +1,10 @@
+import { closeDb, getDb } from "../src/lib/db/mongo";
+import { C } from "../src/lib/db/collections";
+import { runKocTool } from "../src/lib/koc-data/tools";
+const db = await getDb();
+const camp = (await db.collection(C.campaigns).find({}).sort({ created_at: -1 }).limit(1).toArray())[0];
+const r = await runKocTool("campaign_context", { creatorId: "", sessionId: "len-test", campaignId: String(camp._id) });
+console.log("campaign:", camp._id);
+console.log("summary chars:", r.summary.length, "| rows:", r.rows.length, "| rows json chars:", JSON.stringify(r.rows.slice(0,30)).length);
+await db.collection(C.evidence).deleteMany({ session_id: "len-test" });
+await closeDb();

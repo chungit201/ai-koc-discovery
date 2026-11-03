@@ -7,7 +7,8 @@ import { scoreCampaign } from "./scoring/run";
 import { runS3 } from "./pipeline/s3-content";
 import { prefetchS4Frames, runS4 } from "./pipeline/s4-video";
 import { runS5 } from "./pipeline/s5-recommend";
-import type { AskEvent } from "./chat-events";
+import { campaignVideoRows } from "./koc-data/tools";
+import type { AskEvent, StepPayload } from "./chat-events";
 import type { Capability } from "./plan";
 
 /**
@@ -85,14 +86,21 @@ export async function* runDeepSearch(prompt: string): AsyncGenerator<AskEvent, s
   );
 
   /** Chạy một bước, phát thẻ trước và sau. Lỗi một bước không giết cả lượt — bước sau vẫn chạy được. */
-  const stage = async function* (cap: Capability, run: () => Promise<unknown>, detail: (c: Record<string, any>) => string): AsyncGenerator<AskEvent> { // eslint-disable-line @typescript-eslint/no-explicit-any
+  const stage = async function* (
+    cap: Capability,
+    run: () => Promise<unknown>,
+    detail: (c: Record<string, any>) => string, // eslint-disable-line @typescript-eslint/no-explicit-any
+    /** Dẫn chứng của riêng bước này — hiện ngay trong thẻ, không chờ câu trả lời. */
+    payload?: () => Promise<StepPayload | undefined>,
+  ): AsyncGenerator<AskEvent> {
     if (!planned.has(cap)) return;
     yield { type: "step_add", title: RUNNING[cap], kind: cap === "analyse_videos" ? "videos" : "data" };
     yield { type: "step_start", index: step };
     try {
       await run();
       const c = (await db.collection(C.campaigns).findOne({ _id: id as never })) ?? {};
-      yield { type: "step_done", index: step++, detail: detail(c) };
+      const p = await payload?.().catch(() => undefined);
+      yield { type: "step_done", index: step++, detail: detail(c), ...(p ? { payload: p } : {}) };
     } catch (err) {
       console.error(`[tola] bước ${cap} lỗi`, err);
       yield { type: "step_done", index: step++, detail: `Lỗi ở bước này: ${(err as Error).message}` };
@@ -107,7 +115,20 @@ export async function* runDeepSearch(prompt: string): AsyncGenerator<AskEvent, s
   // Keyframe tải song song với bước đọc nội dung, như pipeline vẫn làm
   if (planned.has("analyse_videos")) void prefetchS4Frames(id).catch(() => undefined);
   yield* stage("screen_content", () => runS3(id), (c) => (c.s3 ? `Đã đọc nội dung của ${c.s3.kocs} KOC` : "xong"));
-  yield* stage("analyse_videos", () => runS4(id), (c) => (c.s4 ? `Đã xem ${c.s4.videos} video của ${c.s4.kocs} KOC (4 khung hình/video, không có tiếng)` : "xong"));
+  /**
+   * Bước xem video phải TRẢ VỀ DẪN CHỨNG, không chỉ đếm: từng video AI đã xem, có thấy đúng sản phẩm
+   * không, điểm demo, ghi chú từng khung hình và chính tấm 4 khung hình đó. Xem xong mà không cho
+   * người bán thấy gì thì bước này vô nghĩa với họ.
+   */
+  yield* stage(
+    "analyse_videos",
+    () => runS4(id),
+    (c) => (c.s4 ? `Đã xem ${c.s4.videos} video của ${c.s4.kocs} KOC (4 khung hình/video, không có tiếng)` : "xong"),
+    async () => {
+      const rows = await campaignVideoRows(id);
+      return rows.length ? { table: { tool: "campaign_videos", rows } } : undefined;
+    },
+  );
   yield* stage(
     "recommend",
     () => runS5(id),

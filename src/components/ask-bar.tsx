@@ -505,6 +505,21 @@ function Bubble({ m, handle, onAsk }: { m: Shown; handle: string; onAsk: (q: str
  * Tin nhắn agent đã lưu, dùng lại ở **chat chiến dịch** (`chat-thread.tsx`): các thẻ gọi công cụ kèm
  * bảng, rồi câu trả lời có chip nguồn và gợi ý hỏi tiếp — giống hệt chat KOC.
  */
+/**
+ * Thân một thẻ bước: dẫn chứng do chính bước đó sinh ra. `null` khi bước không có gì để xem (thẻ
+ * co lại thành một dòng tiêu đề).
+ */
+export const hasStepBody = (p?: StepPayload) => Boolean(p?.table || p?.web?.length || p?.videos?.length || p?.products?.length || p?.peers?.length);
+
+export function StepBody({ payload, handle = "" }: { payload?: StepPayload; handle?: string }) {
+  if (payload?.table) return <ToolTableView table={payload.table} handle={handle} compact />;
+  if (payload?.web?.length) return <WebLinks items={payload.web} />;
+  if (payload?.videos?.length) return <Videos items={payload.videos} handle={handle} />;
+  if (payload?.products?.length) return <Products items={payload.products} />;
+  if (payload?.peers?.length) return <Peers items={payload.peers} />;
+  return null;
+}
+
 export function AgentMessage({ m, handle = "", onAsk }: { m: ChatMessage; handle?: string; onAsk: (q: string) => void }) {
   return (
     <div className="space-y-2">
@@ -518,7 +533,7 @@ export function AgentMessage({ m, handle = "", onAsk }: { m: ChatMessage; handle
           {(m.steps ?? []).map((s, i) =>
             s.kind === "conclusion" ? null : (
               <StepCard key={i} index={i} title={s.title} detail={s.detail} done anchor={`${m.id}-step-${i}`}>
-                {s.payload?.table ? <ToolTableView table={s.payload.table} handle={handle} compact /> : s.payload?.web?.length ? <WebLinks items={s.payload.web} /> : undefined}
+                {hasStepBody(s.payload) ? <StepBody payload={s.payload} handle={handle} /> : undefined}
               </StepCard>
             ),
           )}
@@ -997,7 +1012,11 @@ function ToolTableView({ table, handle, compact: small }: { table: ToolTable; ha
       </div>
     );
 
-  if (table.tool === "analyze_videos")
+  /**
+   * Bằng chứng video. `analyze_videos` là của một KOC (handle lấy từ trang đang mở); `campaign_videos`
+   * là của cả chiến dịch nên mỗi hàng tự mang tên + handle KOC.
+   */
+  if (table.tool === "analyze_videos" || table.tool === "campaign_videos")
     return (
       <div className={`space-y-2 ${small ? "max-h-[360px] overflow-y-auto" : ""}`}>
         {rows.map((v) => {
@@ -1006,12 +1025,19 @@ function ToolTableView({ table, handle, compact: small }: { table: ToolTable; ha
           return (
             <div key={s(v.video_id)} className="rounded-lg border border-line bg-white p-2.5">
               <div className="flex items-start gap-2.5">
-                <VideoThumb id={s(v.video_id)} title={s(v.title)} tiktokUrl={tiktokVideo(handle, s(v.video_id))} />
+                <VideoThumb id={s(v.video_id)} title={s(v.title)} tiktokUrl={tiktokVideo(s(v.handle) || handle, s(v.video_id))} />
                 <div className="min-w-0 flex-1">
+                  {s(v.creator_name) && (
+                    <p className="mb-0.5 text-[12px] font-semibold text-brand">
+                      {s(v.creator_name)}
+                      {v.picked === false && <span className="font-normal text-ink-muted"> · dự phòng</span>}
+                    </p>
+                  )}
                   <p className="line-clamp-2 text-[12.5px] font-medium">{s(v.title)}</p>
                   <p className="num mt-0.5 text-[11.5px] text-ink-muted">
-                    {compact(n(v.views))} view · {vnd(n(v.revenue))}
+                    {v.views !== undefined && <>{compact(n(v.views))} view · {vnd(n(v.revenue))}</>}
                     {s(v.product) && <> · gắn {s(v.product).slice(0, 40)}</>}
+                    {v.product_match !== undefined && <>{v.product_match ? "Có" : "Không"} thấy sản phẩm của chiến dịch trong khung hình</>}
                   </p>
                   <p className="mt-1 flex flex-wrap gap-1 text-[11px]">
                     <span className={`rounded px-1.5 py-px ${v.product_demo === "có" ? "bg-emerald-50 text-emerald-700" : "bg-zinc-100 text-zinc-600"}`}>
