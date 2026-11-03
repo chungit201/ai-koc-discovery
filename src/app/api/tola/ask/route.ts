@@ -1,0 +1,88 @@
+import { randomUUID } from "node:crypto";
+import { getDb } from "@/lib/db/mongo";
+import { C } from "@/lib/db/collections";
+import { askTola } from "@/lib/chat-creator-agent";
+import { mentionContext, resolveMentions } from "@/lib/mentions";
+import type { ChatMessage } from "@/lib/chat";
+import type { AskEvent, StepKind, StepPayload } from "@/lib/chat-events";
+
+/**
+ * Hỏi trợ lý **Tola**, trả về theo luồng NDJSON (mỗi dòng một sự kiện) để giao diện hiện dần từng
+ * thẻ công cụ thay vì quay vòng chờ cả phút — Server Action không stream được nên phải là route.
+ *
+ * Ngữ cảnh "đang hỏi về ai" lấy từ tag `@handle` trong chính câu hỏi (`lib/mentions.ts`), không
+ * phụ thuộc trang nào đang mở. Cả lượt hỏi–đáp lưu vào `tola_chats` để mở lại vẫn còn.
+ */
+export async function POST(req: Request) {
+  const body = (await req.json().catch(() => ({}))) as { text?: string; threadId?: string; campaignId?: string };
+  const text = String(body.text ?? "").trim().slice(0, 1000);
+  const threadId = String(body.threadId ?? "").trim() || randomUUID();
+  const campaignId = String(body.campaignId ?? "").trim() || undefined;
+  if (!text) return new Response("Thiếu nội dung câu hỏi", { status: 400 });
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const enc = new TextEncoder();
+      const send = (e: AskEvent) => controller.enqueue(enc.encode(`${JSON.stringify(e)}\n`));
+
+      const steps: { title: string; detail: string; kind?: StepKind; payload?: StepPayload }[] = [];
+      let reply = "";
+      let markdown = "";
+      let unverified: string[] = [];
+      let followUps: string[] = [];
+
+      try {
+        const db = await getDb();
+        const thread = await db.collection(C.tolaChats).findOne({ _id: threadId as never }, { projection: { messages: 1 } });
+        const history = ((thread?.messages as ChatMessage[]) ?? []).slice(-8);
+
+        const mentions = await resolveMentions(text);
+        send({ type: "plan", steps: [], agent: true });
+
+        for await (const e of askTola({ text, history, mentioned: mentions.found, context: mentionContext(mentions), campaignId })) {
+          send(e);
+          if (e.type === "step_add") steps.push({ title: e.title, detail: "", kind: e.kind });
+          else if (e.type === "step_done" && steps[e.index]) Object.assign(steps[e.index], { detail: e.detail, ...(e.payload ? { payload: e.payload } : {}) });
+          else if (e.type === "conclusion") {
+            reply = e.text;
+            markdown = e.markdown ?? "";
+            unverified = e.unverified ?? [];
+            followUps = e.follow_ups ?? [];
+          }
+        }
+      } catch (err) {
+        console.error("[tola] luồng hỏi đáp lỗi", err);
+        send({ type: "error", message: "Mình gặp lỗi khi tra dữ liệu — bạn thử lại giúp mình nhé." });
+      }
+
+      // Lưu cả khi lỗi giữa chừng: phần bước đã chạy vẫn giữ được để xem lại
+      try {
+        const db = await getDb();
+        const now = new Date();
+        const chats = db.collection(C.tolaChats);
+        const existing = await chats.findOne({ _id: threadId as never }, { projection: { title: 1 } });
+        await chats.updateOne(
+          { _id: threadId as never },
+          {
+            $push: {
+              messages: {
+                $each: [
+                  { id: randomUUID(), role: "user", text, created_at: now },
+                  { id: randomUUID(), role: "assistant", agent: true, text: reply, markdown, unverified, steps, follow_ups: followUps, created_at: now },
+                ],
+              },
+            } as never,
+            $set: { updated_at: now, ...(campaignId ? { campaign_id: campaignId } : {}), ...(existing?.title ? {} : { title: text.slice(0, 80) }) },
+            $setOnInsert: { created_at: now },
+          },
+          { upsert: true },
+        );
+      } catch (err) {
+        console.error("[tola] lưu hội thoại lỗi", err);
+      }
+      controller.close();
+    },
+  });
+
+  return new Response(stream, { headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store" } });
+}

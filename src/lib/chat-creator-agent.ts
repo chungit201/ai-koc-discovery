@@ -40,6 +40,25 @@ const INTRO_KOC = `[${AGENT_PROMPT_VERSION}] Bạn là chuyên viên phân tích
 Nguồn 1 (chính): các công cụ mcp__koc__* — dữ liệu Kalodata đã thu thập vào DB, 30 ngày.
 Nguồn 2 (phụ): WebSearch / WebFetch — CHỈ dùng khi câu hỏi nằm ngoài dữ liệu Kalodata (đời tư công khai, tiểu sử, thương hiệu riêng, tin tức, phốt…).`;
 
+/**
+ * Đầu prompt của **trợ lý Tola** — một lối vào cho mọi câu hỏi, thay cho hai prompt tách riêng
+ * trước đây (`INTRO_KOC` cho trang hồ sơ, `INTRO_CAMPAIGN` cho trang chiến dịch). Ngữ cảnh "đang hỏi
+ * về ai" do tag `@handle` trong câu quyết định (`lib/mentions.ts`), không phụ thuộc trang đang mở.
+ */
+const INTRO_TOLA = `[${AGENT_PROMPT_VERSION}-tola] Bạn là Tola — trợ lý phân tích KOC TikTok Shop mỹ phẩm Việt Nam, trả lời người bán hàng.
+Nguồn 1 (chính): công cụ mcp__koc__* — dữ liệu Kalodata đã thu thập vào DB, kỳ 30 ngày.
+Nguồn 2 (phụ): WebSearch / WebFetch — CHỈ khi câu hỏi nằm ngoài dữ liệu Kalodata (đời tư công khai, tiểu sử, thương hiệu riêng, tin tức, phốt…).
+
+BẮT ĐẦU TỪ ĐÂU
+- Câu hỏi có nhắc tên/handle KOC → phần ngữ cảnh bên dưới đã ghi sẵn creator_id, dùng thẳng.
+- Hỏi TÌM KOC mới ("tìm 5 KOC bán kem chống nắng", "ai đang tăng trưởng mạnh nhất") → search_creators.
+- Hỏi về một chiến dịch mà chưa có id → list_campaigns trước, rồi campaign_context.
+- Đang trong một chiến dịch cụ thể → campaign_context ĐẦU TIÊN.
+- KOC nào "CHƯA có dữ liệu chi tiết" thì các công cụ đọc sâu sẽ trống: nói thẳng, đừng hứa phân tích.
+
+SO SÁNH NGOÀI DANH SÁCH
+Người bán nhắc một KOC không nằm trong chiến dịch đang xem thì cứ search_creators tìm rồi đọc dữ liệu của họ — không còn bị giới hạn trong shortlist nữa.`;
+
 /** Đầu prompt cho chat chiến dịch (câu hỏi giải thích / so sánh / thông tin ngoài dữ liệu). */
 const INTRO_CAMPAIGN = `[${AGENT_PROMPT_VERSION}-campaign] Bạn là chuyên viên phân tích KOC TikTok Shop mỹ phẩm Việt Nam, trả lời người bán hàng về MỘT CHIẾN DỊCH đã chạy: danh sách KOC được chọn + dự phòng.
 Nguồn 1 (chính): công cụ mcp__koc__*. Gọi campaign_context ĐẦU TIÊN (tiêu chí, điểm từng thành phần, ngân sách đã chia, bằng chứng chấm điểm của từng KOC). Các công cụ còn lại đọc dữ liệu MỘT KOC — truyền creator_id lấy từ campaign_context.
@@ -263,6 +282,38 @@ export async function* analyseCampaignAgent(campaignId: string, text: string, hi
     env: { KOC_CREATORS: creatorIds.join(","), KOC_CAMPAIGN: campaignId },
     purpose: "campaign-agent",
     names,
+  });
+}
+
+/**
+ * **Trợ lý Tola** — lối vào thống nhất. Dùng được ở mọi nơi: màn `/tola`, trang hồ sơ KOC (ô chat
+ * điền sẵn `@handle`), và về sau là cả chat chiến dịch.
+ *
+ * Khác hai hàm trên ở chỗ **không khoá phạm vi dữ liệu**: `KOC_CREATORS` chỉ truyền các KOC được tag
+ * để làm mặc định khi agent gọi công cụ không kèm `creator_id`; agent vẫn tự tìm được người khác
+ * bằng `search_creators`.
+ */
+export async function* askTola(opts: {
+  text: string;
+  /** Lịch sử hội thoại của luồng này. */
+  history?: ChatMessage[];
+  /** KOC được tag trong câu (đã giải nghĩa ở `lib/mentions.ts`). */
+  mentioned?: { creator_id: string; name: string }[];
+  /** Khối ngữ cảnh do `mentionContext()` dựng. */
+  context?: string;
+  /** Khi câu hỏi gắn với một chiến dịch cụ thể. */
+  campaignId?: string;
+}): AsyncGenerator<AskEvent> {
+  const h = historyText(opts.history ?? []);
+  yield* runAgent({
+    system: INTRO_TOLA + RULES,
+    prompt: [opts.context ?? "", h ? `Hội thoại trước đó:\n${h}` : "", `Câu hỏi của người bán: ${opts.text}`],
+    env: {
+      ...(opts.mentioned?.length ? { KOC_CREATORS: opts.mentioned.map((m) => m.creator_id).join(",") } : {}),
+      ...(opts.campaignId ? { KOC_CAMPAIGN: opts.campaignId } : {}),
+    },
+    purpose: "tola",
+    names: new Map((opts.mentioned ?? []).map((m) => [m.creator_id, m.name])),
   });
 }
 

@@ -672,7 +672,7 @@ function LiveAnswer({ live, handle, onAsk, onRevealed }: { live: Live; handle: s
  * Mỗi bước là **một card riêng**: tiêu đề + kết quả tóm tắt ở dải trên, dẫn chứng của riêng bước đó
  * ở thân card. Gộp hết vào một khối như trước khiến người dùng không phân biệt được bước nào ra gì.
  */
-function StepCard({
+export function StepCard({
   index,
   title,
   detail,

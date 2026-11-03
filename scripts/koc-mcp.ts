@@ -16,13 +16,16 @@ import { KOC_TOOLS, runKocTool, type ToolResult } from "../src/lib/koc-data/tool
 
 const SESSION = process.env.KOC_SESSION ?? "";
 /**
- * KOC được phép đọc. Chat KOC: đúng một người (`KOC_CREATOR`). Chat chiến dịch: danh sách của chiến
- * dịch (`KOC_CREATORS`, phân cách dấu phẩy) + `KOC_CAMPAIGN` — agent chọn KOC qua tham số
- * `creator_id`, nhưng chỉ trong danh sách này.
+ * KOC được nhắc tới trong câu hỏi (`KOC_CREATORS`, phân cách dấu phẩy) — dùng làm **mặc định** khi
+ * agent gọi công cụ mà không truyền `creator_id`, và để tiêu đề thẻ ghi rõ đang đọc dữ liệu của ai.
+ *
+ * KHÔNG còn là danh sách cho phép: từ khi có `search_creators`, agent tự tìm được KOC ngoài danh
+ * sách, nên chặn cứng `creator_id` ở đây sẽ khoá luôn những câu hỏi so sánh hợp lệ ("so KOC này với
+ * Châu Lười Makeup"). Công cụ nào nhận id không có thật thì tự ném lỗi "Không có KOC <id>".
  */
 const CREATORS = (process.env.KOC_CREATORS ?? process.env.KOC_CREATOR ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 const CAMPAIGN = process.env.KOC_CAMPAIGN || undefined;
-const MULTI = CREATORS.length > 1;
+const MULTI = CREATORS.length !== 1;
 const PROTOCOL = "2025-06-18";
 
 console.log = console.info = (...a: unknown[]) => console.error(...a); // không để thư viện nào làm bẩn stdout
@@ -59,11 +62,13 @@ function toText(r: ToolResult): string {
 }
 
 /** Công cụ không đọc dữ liệu của riêng một KOC → không chèn `creator_id`. */
+const GLOBAL_TOOLS = new Set(["search_creators", "list_campaigns"]);
+/** Chỉ có nghĩa khi đang nói về một chiến dịch cụ thể. */
 const CAMPAIGN_TOOLS = new Set(["campaign_context", "allocate_budget"]);
 
 /** Chat chiến dịch: thêm tham số `creator_id` cho các công cụ đọc dữ liệu một KOC. */
 function withCreator(name: string, schema: Record<string, unknown>): Record<string, unknown> {
-  if (!MULTI || name === "calc" || CAMPAIGN_TOOLS.has(name)) return schema;
+  if (!MULTI || name === "calc" || CAMPAIGN_TOOLS.has(name) || GLOBAL_TOOLS.has(name)) return schema;
   const props = (schema.properties as Record<string, unknown>) ?? {};
   return {
     ...schema,
@@ -90,9 +95,11 @@ async function handle(m: Msg): Promise<void> {
       const name = String(m.params?.name ?? "");
       const { creator_id, ...args } = (m.params?.arguments as Record<string, unknown>) ?? {};
       try {
-        if (!SESSION || !CREATORS.length) throw new Error("Thiếu KOC_SESSION / KOC_CREATOR(S)");
-        const creatorId = creator_id ? String(creator_id) : CREATORS[0];
-        if (!CREATORS.includes(creatorId)) throw new Error(`creator_id ${creatorId} không thuộc danh sách KOC của chiến dịch — lấy id từ campaign_context`);
+        if (!SESSION) throw new Error("Thiếu KOC_SESSION");
+        // Công cụ đọc dữ liệu một KOC mà không có id nào để mặc định → bảo agent đi tìm trước
+        const creatorId = creator_id ? String(creator_id) : (CREATORS[0] ?? "");
+        if (!creatorId && !GLOBAL_TOOLS.has(name) && !CAMPAIGN_TOOLS.has(name) && name !== "calc")
+          throw new Error("Chưa biết hỏi về KOC nào — gọi search_creators để tìm rồi truyền creator_id");
         // creator_id nằm trong args để id bằng chứng khác nhau giữa các KOC
         const r = await runKocTool(name, { creatorId, sessionId: SESSION, campaignId: CAMPAIGN }, MULTI && creator_id ? { ...args, creator_id: creatorId } : args);
         return reply(id, { content: [{ type: "text", text: toText(r) }] });

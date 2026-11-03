@@ -21,6 +21,7 @@ export const C = {
   aiAssessments: "ai_assessments", // per-KOC AI analyses keyed by (creator, content_hash, model_id, prompt_version) // identical LLM prompts → cached answer (0 tokens on repeat)
   videoMedia: "video_media", // resolved playable MP4 links per video (cache, refreshed after a few hours)
   creatorChats: "creator_chats", // hội thoại hỏi đáp ở trang hồ sơ từng KOC (tách khỏi `creators` vì doc đó do crawler ghi đè)
+  tolaChats: "tola_chats", // hội thoại với trợ lý Tola — không gắn với KOC hay chiến dịch nào, ngữ cảnh nằm trong tag @handle của từng câu
   stageItems: "stage_items",
 } as const;
 

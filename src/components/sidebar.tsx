@@ -4,16 +4,13 @@ import { ScanSearch, Sparkles, Users } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { DeepSearchButton } from "./deep-search-button";
+import { TolaMark } from "./tola-mark";
+import { AI_NAME } from "@/lib/brand";
 
 const NAV = [
   { href: "/kocs", label: "Nhà sáng tạo", icon: Users },
   { href: "/campaigns", label: "Chiến dịch", icon: ScanSearch },
 ];
-
-/**
- * Tên trợ lý AI, hiện trên nút giữa thanh dưới (giống cách Kalodata gọi trợ lý của họ là "Pilot").
- * Rút từ DE-TOLA — ngắn, đọc được bằng tiếng Việt, vừa một nhãn tab. Đổi ở đây là đổi mọi nơi.
- */
 
 export function Sidebar() {
   const path = usePathname();
@@ -45,6 +42,18 @@ export function Sidebar() {
             </Link>
           );
         })}
+        {/* Trợ lý: desktop vào bằng mục này, mobile bằng nút nổi giữa thanh tab dưới */}
+        <Link
+          href="/tola"
+          className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-[14px] transition ${
+            path.startsWith("/tola") ? "bg-brand-soft font-semibold text-brand-strong" : "text-zinc-700 hover:bg-zinc-50"
+          }`}
+        >
+          <span className="grid h-[18px] w-[18px] place-items-center">
+            <TolaMark size={18} />
+          </span>
+          Hỏi {AI_NAME}
+        </Link>
         <div className="pt-3">
           <DeepSearchButton />
         </div>
@@ -77,9 +86,30 @@ export function MobileNav() {
 }
 
 /**
+ * Nút trợ lý Tola nổi giữa thanh tab — mở **màn `/tola`**, không phải khung tạo chiến dịch.
+ * Tạo chiến dịch giờ là một trong những việc Tola làm, không còn là lối vào riêng.
+ */
+function TolaFab({ active }: { active: boolean }) {
+  return (
+    <Link href="/tola" aria-label={`Hỏi ${AI_NAME}`} className="flex flex-col items-center transition active:scale-95">
+      <span
+        className={`relative grid h-14 w-14 place-items-center overflow-hidden rounded-full bg-gradient-to-b from-[#454cab] to-[#1b1d4d] text-white shadow-[0_8px_22px_-8px_rgb(27_29_77_/_0.75)] ring-4 ${
+          active ? "ring-brand-soft" : "ring-white"
+        }`}
+      >
+        <TolaMark size={29} className="relative z-10" />
+        {/* Vệt sáng lướt chéo qua mặt nút — báo "đang sống", lặp thưa để không gây nhiễu mắt */}
+        <span aria-hidden className="animate-shine pointer-events-none absolute inset-y-0 -left-1/2 w-1/2 bg-gradient-to-r from-transparent via-white/45 to-transparent" />
+      </span>
+      <span className="relative z-10 -mt-2 rounded-full bg-brand px-2 py-[3px] text-[10.5px] font-bold leading-none text-white shadow-sm ring-2 ring-white">{AI_NAME}</span>
+    </Link>
+  );
+}
+
+/**
  * Thanh tab dưới đáy (mobile), nút trợ lý AI nổi ở giữa — bố cục quen thuộc của app điện thoại:
  * hai mục dữ liệu hai bên, hành động chính nằm đúng chỗ ngón cái với tới.
- * Nút giữa mở thẳng khung tạo chiến dịch, tức là lối vào AI của sản phẩm.
+ * Nút giữa mở màn `/tola` — lối vào trợ lý, tạo chiến dịch chỉ là một việc nó làm.
  */
 export function BottomNav() {
   const path = usePathname();
@@ -109,7 +139,7 @@ export function BottomNav() {
           {/* Nhô lên khỏi thanh — nút này là hành động chính, không phải một tab ngang hàng.
               Vòng tròn vượt lên trên mép thanh, còn nhãn tên rơi đúng vào hàng chữ của các tab. */}
           <div className="absolute -top-6 left-1/2 -translate-x-1/2">
-            <DeepSearchButton variant="fab" />
+            <TolaFab active={path.startsWith("/tola")} />
           </div>
         </div>
         {tab(NAV[1])}

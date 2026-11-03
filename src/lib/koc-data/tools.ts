@@ -1,12 +1,13 @@
 import "server-only";
 import { createHash } from "node:crypto";
+import type { Db } from "mongodb";
 import { getDb } from "../db/mongo";
 import { C } from "../db/collections";
 import { compact, pct, vnd } from "../format";
 import { analyseVideo } from "../pipeline/s4-video";
 import { topBrand } from "../evidence/creator";
 import { categoryBreakdown, channelTotals, denominator, productFacts, UNCATEGORISED, type CategoryLevel } from "./facts";
-import { EXCLUDE_LABELS } from "../scoring/rules";
+import { EXCLUDE_LABELS, focusPattern } from "../scoring/rules";
 
 /**
  * Bộ công cụ cho agent hỏi đáp về KOC (docs/10-koc-agent.md, P2). Mỗi hàm **chỉ đọc DB**, trả
@@ -476,6 +477,218 @@ async function getPeers({ creatorId }: ToolCtx): Promise<Out> {
   };
 }
 
+// ── search_creators ───────────────────────────────────────────────────────────
+/**
+ * Tìm KOC trong toàn bộ dữ liệu đã thu thập — **công cụ mở khoá trợ lý Tola**.
+ *
+ * Trước đây agent chỉ đọc được đúng danh sách do trang phát xuống (`KOC_CREATOR` /
+ * `KOC_CREATORS`), nên không trả lời nổi những câu cơ bản nhất: "tìm KOC bán serum doanh thu
+ * trên 1 tỉ", hay "so KOC này với Châu Lười Makeup" khi người đó không nằm trong shortlist.
+ *
+ * Không tái dùng `data/queries.ts: searchKocs` được: file đó gọi `connection()` của `next/server`,
+ * mà công cụ này chạy trong tiến trình MCP riêng, không có request context của Next.
+ */
+const SORT_FIELD: Record<string, string> = {
+  revenue: "m.revenue",
+  engagement: "m.video_engagement_rate",
+  views: "m.views",
+  followers: "followers",
+  growth: "m.revenue_growth_rate",
+};
+
+/** Phạm vi dữ liệu mới nhất đã crawl (danh mục + kỳ) — mọi số liệu đều gắn với một kỳ. */
+async function latestScope(db: Db): Promise<{ category_id: string; date_range: string } | null> {
+  const run =
+    (await db.collection(C.crawlRuns).findOne({ source: "kalodata_web", "config.category_id": COSMETICS_SCOPE }, { sort: { started_at: -1 }, projection: { config: 1 } })) ??
+    (await db.collection(C.crawlRuns).findOne({ source: "kalodata_web" }, { sort: { started_at: -1 }, projection: { config: 1 } }));
+  if (!run) return null;
+  const cfg = run.config as Record<string, string>;
+  return { category_id: cfg.category_id, date_range: `${cfg.start_date}~${cfg.end_date}` };
+}
+
+const COSMETICS_SCOPE = "848776,848648";
+
+async function searchCreators(_ctx: ToolCtx, args: Args): Promise<Out> {
+  const db = await getDb();
+  const scope = await latestScope(db);
+  if (!scope) throw new Error("Chưa có dữ liệu crawl nào");
+
+  const q = String(args.q ?? "").trim();
+  const limit = int(args.limit, 10, 30);
+  const sort = SORT_FIELD[String(args.sort ?? "revenue")] ?? SORT_FIELD.revenue;
+
+  const match: Record<string, unknown> = {};
+  if (q) match.$or = [{ handle: { $regex: q, $options: "i" } }, { nickname: { $regex: q, $options: "i" } }];
+
+  /**
+   * Lọc theo SẢN PHẨM đã bán — tra tên sản phẩm thật trong `creator_products`, không phải tên kênh.
+   * Thiếu bộ lọc này agent phải gọi `list_products` cho từng KOC để tự dò (đã đo: 25 lần gọi cho
+   * một câu "tìm KOC bán kem chống nắng"). Dùng chung `focusPattern` với S2 nên cùng bảng đồng
+   * nghĩa: "phấn nền" ra cả phấn nước/cushion, và không ăn nhầm phấn má.
+   */
+  let focusRevenue: Map<string, number> | null = null;
+  const product = String(args.product ?? "").trim();
+  if (product) {
+    const re = focusPattern(scope.category_id, product);
+    const pids = (await db.collection(C.products).find({ name: { $regex: re.source, $options: "i" } }, { projection: { _id: 1 } }).toArray()).map((p) => p._id);
+    if (!pids.length)
+      return {
+        type: "metric",
+        summary: `Không có sản phẩm nào khớp '${product}' trong dữ liệu đã thu thập. Thử từ khoá rộng hơn, hoặc bỏ bộ lọc sản phẩm rồi tự xem list_products của vài KOC đầu bảng.`,
+        rows: [],
+        numbers: { found: 0 },
+        source: { collection: C.products, ref: product },
+      };
+    const agg = await db
+      .collection(C.creatorProducts)
+      .aggregate<{ _id: string; revenue: number }>([
+        { $match: { product_id: { $in: pids as never[] } } },
+        // Gộp theo (KOC, sản phẩm) trước: crawl 2 lần sẽ cộng đôi doanh thu nếu không gộp
+        { $group: { _id: { c: "$creator_id", p: "$product_id" }, revenue: { $max: "$revenue" } } },
+        { $group: { _id: "$_id.c", revenue: { $sum: "$revenue" } } },
+      ])
+      .toArray();
+    focusRevenue = new Map(agg.map((a) => [String(a._id), num(a.revenue)]));
+    if (!focusRevenue.size)
+      return {
+        type: "metric",
+        summary: `Có ${pids.length} sản phẩm khớp '${product}' nhưng chưa KOC nào trong dữ liệu bán chúng.`,
+        rows: [],
+        numbers: { found: 0, products_matched: pids.length },
+        source: { collection: C.creatorProducts, ref: product },
+      };
+    match._id = { $in: [...focusRevenue.keys()] };
+  }
+
+  if (args.age) match["audience.age_buckets_matched"] = String(args.age);
+  const minF = num(args.min_followers);
+  const maxF = num(args.max_followers);
+  if (minF || maxF) match.followers = { ...(minF ? { $gte: minF } : {}), ...(maxF ? { $lte: maxF } : {}) };
+  if (args.mcn === "yes") match.mcn = { $nin: [null, ""] };
+  if (args.mcn === "no") match.mcn = { $in: [null, ""] };
+  // Mặc định bỏ kênh do nhà bán tự vận hành — không phải đối tượng đi hợp tác quảng bá
+  if (args.include_seller_accounts !== true) match.status = { $ne: "BELONGED_TO_SELLER" };
+  const minRev = num(args.min_revenue);
+  if (minRev) match["m.revenue"] = { $gte: minRev };
+
+  const docs = await db
+    .collection(C.creatorMetrics)
+    .aggregate<Record<string, any>>([ // eslint-disable-line @typescript-eslint/no-explicit-any
+      { $match: { category_scope: scope.category_id, date_range: scope.date_range, source: "web:creator/queryList" } },
+      { $project: { _id: 0, m: "$$ROOT" } },
+      { $lookup: { from: C.creators, localField: "m.creator_id", foreignField: "_id", as: "c" } },
+      { $unwind: "$c" },
+      { $replaceRoot: { newRoot: { $mergeObjects: ["$c", { m: "$m" }] } } },
+      ...(Object.keys(match).length ? [{ $match: match }] : []),
+      { $sort: { [sort]: -1 } },
+      { $limit: limit },
+    ])
+    .toArray();
+
+  const rows = docs.map((d, i) => ({
+    rank: i + 1,
+    creator_id: String(d._id),
+    name: String(d.nickname || d.handle || d._id),
+    handle: String(d.handle ?? "").replace(/^@/, ""),
+    followers: num(d.followers),
+    revenue: num(d.m?.revenue),
+    sales: num(d.m?.sales_volume),
+    engagement: num(d.m?.video_engagement_rate),
+    growth_rate: typeof d.m?.revenue_growth_rate === "number" ? d.m.revenue_growth_rate : null,
+    mcn: d.mcn ? String(d.mcn) : null,
+    has_detail: Boolean(d.detail_updated_at),
+    ...(focusRevenue ? { focus_revenue: focusRevenue.get(String(d._id)) ?? 0 } : {}),
+  }));
+  // Lọc theo sản phẩm thì thứ hạng phải theo doanh thu CHÍNH sản phẩm đó, không phải cả kênh
+  if (focusRevenue && !args.sort) {
+    rows.sort((a, b) => ((b as { focus_revenue?: number }).focus_revenue ?? 0) - ((a as { focus_revenue?: number }).focus_revenue ?? 0));
+    rows.forEach((r, i) => (r.rank = i + 1));
+  }
+
+  const numbers: Record<string, number> = { found: rows.length };
+  rows.forEach((r, i) => {
+    numbers[`k${i + 1}_revenue`] = r.revenue;
+    numbers[`k${i + 1}_followers`] = r.followers;
+    numbers[`k${i + 1}_engagement`] = r.engagement;
+    if (r.growth_rate !== null) numbers[`k${i + 1}_growth_rate`] = r.growth_rate;
+    const fr = (r as { focus_revenue?: number }).focus_revenue;
+    if (fr !== undefined) numbers[`k${i + 1}_focus_revenue`] = fr;
+  });
+
+  const filterText = [
+    q ? `tên chứa '${q}'` : null,
+    product ? `có bán '${product}'` : null,
+    args.age ? `tuổi ${String(args.age)}` : null,
+    minF || maxF ? `follower ${minF ? compact(minF) : "0"}–${maxF ? compact(maxF) : "∞"}` : null,
+    minRev ? `doanh thu ≥ ${vnd(minRev)}` : null,
+    args.mcn === "no" ? "chưa ký MCN" : args.mcn === "yes" ? "đã ký MCN" : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+
+  return {
+    type: "metric",
+    summary:
+      `Tìm trong dữ liệu mỹ phẩm TikTok Việt Nam kỳ ${scope.date_range.replace("~", " → ")}${filterText ? ` (${filterText})` : ""}: ${rows.length} KOC, xếp theo ${String(args.sort ?? "revenue")}. ` +
+      (rows.length
+        ? rows
+            .map(
+              (r) =>
+                `#${r.rank} ${r.name} (id ${r.creator_id}, handle @${r.handle}): ${
+                  focusRevenue ? `doanh thu '${product}' ${vnd((r as { focus_revenue?: number }).focus_revenue ?? 0)}, ` : ""
+                }doanh thu mỹ phẩm cả kênh ${vnd(r.revenue)}, ${compact(r.followers)} follower, tương tác ${pct(r.engagement)}` +
+                `${r.growth_rate === null ? "" : `, doanh thu ${r.growth_rate >= 0 ? "+" : ""}${p1(r.growth_rate)} so kỳ trước`}` +
+                `${r.mcn ? `, MCN ${r.mcn}` : ", chưa ký MCN"}${r.has_detail ? "" : " — CHƯA có dữ liệu chi tiết, không gọi được các công cụ đọc sâu"}`,
+            )
+            .join(" || ")
+        : "Không có KOC nào khớp — thử nới bộ lọc."),
+    rows,
+    numbers,
+    source: { collection: C.creatorMetrics, ref: scope.date_range },
+  };
+}
+
+// ── list_campaigns ────────────────────────────────────────────────────────────
+/** Các chiến dịch đã tạo — để trợ lý trả lời "chiến dịch kem chống nắng tuần trước ra sao?". */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- chữ ký chung của ToolSpec.run
+async function listCampaignsTool(_ctx: ToolCtx, _args: Args): Promise<Out> {
+  const db = await getDb();
+  const docs = await db
+    .collection(C.campaigns)
+    .find({}, { projection: { prompt: 1, category_name: 1, koc_count: 1, budget_total: 1, created_at: 1, scoring: 1, s5: 1, pipeline: 1 } })
+    .sort({ created_at: -1 })
+    .limit(20)
+    .toArray();
+
+  const rows = docs.map((c) => ({
+    campaign_id: String(c._id),
+    prompt: String(c.prompt ?? "").slice(0, 120),
+    category: String(c.category_name ?? ""),
+    koc_count: num(c.koc_count),
+    budget_total: num(c.budget_total),
+    picked: num(c.s5?.picks?.length),
+    stage: String(c.pipeline?.stage ?? "—"),
+    created_at: c.created_at instanceof Date ? c.created_at.toISOString().slice(0, 10) : "",
+  }));
+
+  return {
+    type: "metric",
+    summary:
+      `${rows.length} chiến dịch gần nhất. ` +
+      rows
+        .map(
+          (r) =>
+            `${r.campaign_id} (${r.created_at}, ${r.category}): '${r.prompt}' — ${r.koc_count || "?"} KOC${r.budget_total ? `, ngân sách ${vnd(r.budget_total)}` : ", chưa có ngân sách"}, ${
+              r.stage === "done" ? (r.picked ? `đã chọn ${r.picked} KOC` : "đã chạy xong") : `đang ở bước ${r.stage}`
+            }`,
+        )
+        .join(" || "),
+    rows,
+    numbers: { campaigns: rows.length },
+    source: { collection: C.campaigns, ref: "list" },
+  };
+}
+
 // ── campaign_context ──────────────────────────────────────────────────────────
 const SCORE_LABEL: Record<string, string> = {
   performance: "hiệu suất",
@@ -579,6 +792,8 @@ async function campaignContext({ campaignId }: ToolCtx): Promise<Out> {
     numbers[`k${i + 1}_followers`] = r.followers;
     numbers[`k${i + 1}_revenue`] = r.revenue;
     if (r.growth_rate !== null) numbers[`k${i + 1}_growth_rate`] = r.growth_rate;
+    const fr = (r as { focus_revenue?: number }).focus_revenue;
+    if (fr !== undefined) numbers[`k${i + 1}_focus_revenue`] = fr;
     if (r.breakout_rate !== null) numbers[`k${i + 1}_breakout_rate`] = r.breakout_rate;
     if (r.budget) numbers[`k${i + 1}_budget`] = r.budget;
     for (const [k, v] of Object.entries(r.scores)) numbers[`k${i + 1}_${k}`] = num(v);
@@ -803,6 +1018,34 @@ export const KOC_TOOLS: ToolSpec[] = [
     description: "Đối chuẩn với tối đa 10 KOC cùng nhóm sản phẩm và cùng quy mô follower: xếp hạng doanh thu, trung vị/trung bình nhóm, tương tác, doanh thu trên 1.000 lượt xem live.",
     input_schema: obj(),
     run: getPeers,
+  },
+  {
+    name: "search_creators",
+    description:
+      "TÌM KOC trong toàn bộ dữ liệu đã thu thập (không giới hạn trong danh sách của một chiến dịch). Lọc theo SẢN PHẨM ĐÃ BÁN, tên/handle, follower, doanh thu tối thiểu, độ tuổi khán giả, MCN; xếp theo doanh thu / tương tác / lượt xem / follower / tăng trưởng. Dùng khi người bán hỏi tìm KOC mới, hoặc cần so với một KOC nằm ngoài danh sách hiện có. Mặc định bỏ kênh do nhà bán tự vận hành.",
+    input_schema: obj({
+      q: { type: "string", description: "Tên hoặc handle KOC cần tìm (khớp gần đúng)" },
+      product: {
+        type: "string",
+        description:
+          "Lọc theo SẢN PHẨM đã bán, vd 'kem chống nắng' / 'phấn nền' / 'serum'. Tra tên sản phẩm thật trong dữ liệu bán hàng, có bảng đồng nghĩa. Khi dùng, thứ hạng mặc định theo doanh thu CHÍNH sản phẩm đó. Dùng cái này thay cho việc gọi list_products từng KOC để tự dò.",
+      },
+      min_followers: { type: "number" },
+      max_followers: { type: "number" },
+      min_revenue: { type: "number", description: "Doanh thu mỹ phẩm 30 ngày tối thiểu, VND" },
+      age: { type: "string", enum: ["18-24", "25-34", "35-44", "45-54", "55+"], description: "Nhóm tuổi khán giả chiếm đa số" },
+      mcn: { type: "string", enum: ["yes", "no"] },
+      sort: { type: "string", enum: ["revenue", "engagement", "views", "followers", "growth"], default: "revenue" },
+      limit: { type: "integer", minimum: 1, maximum: 30, default: 10 },
+      include_seller_accounts: { type: "boolean", default: false },
+    }),
+    run: searchCreators,
+  },
+  {
+    name: "list_campaigns",
+    description: "Danh sách chiến dịch đã tạo (mới nhất trước): id, yêu cầu gốc, danh mục, số KOC, ngân sách, tiến độ. Dùng khi người bán nhắc tới một chiến dịch mà chưa cho id.",
+    input_schema: obj(),
+    run: listCampaignsTool,
   },
   {
     name: "campaign_context",
