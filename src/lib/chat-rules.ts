@@ -2,10 +2,20 @@
  * Giới hạn **khoá cứng** cho hội thoại. Đây là luật của hệ thống, không phải lời dặn trong prompt:
  * model có thể bị thuyết phục, hằng số thì không.
  *
- * Trước đây file còn `limitDeepen` / `limitExclude` (trần số KOC được xem video thêm hoặc bị loại
- * trong một lượt) dùng cho chat trên trang chiến dịch. Trang đó đã bỏ; khi làm các công cụ ghi
- * `deepen_koc` / `exclude_koc` cho Tola thì lấy lại từ git history của file này.
+ * Trước đây file còn `limitDeepen` / `limitExclude` kiểm tra danh sách id do model đưa ra. Việc đó
+ * giờ nằm trong chính công cụ (`exclude_koc`, `deepen_koc` ở `koc-data/tools.ts`): công cụ tự đối
+ * chiếu id với shortlist nên không cần một tầng lọc riêng, chỉ còn hai cái trần ở đây.
  */
+
+/**
+ * Số KOC được phân tích video thêm trong MỘT lần gọi. Xem video là bước đắt nhất
+ * (~$0,018/video, 2 video/KOC) và chậm nhất, nên yêu cầu kiểu "xem video của tất cả KOC" bị từ
+ * chối; người bán phải chỉ ra người họ thấy ưng.
+ */
+export const DEEPEN_MAX_KOCS = 1;
+
+/** Số KOC tối đa bị loại trong một lần gọi — tránh một câu chat xoá sạch đề xuất. */
+export const EXCLUDE_MAX_KOCS = 3;
 
 /**
  * Câu hỏi về giọng nói / âm thanh. S4 gửi cho model **4 khung hình tĩnh**, không có audio và

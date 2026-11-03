@@ -58,6 +58,13 @@ BẮT ĐẦU TỪ ĐÂU
 - Đang trong một chiến dịch cụ thể → campaign_context ĐẦU TIÊN.
 - KOC nào "CHƯA có dữ liệu chi tiết" thì các công cụ đọc sâu sẽ trống: nói thẳng, đừng hứa phân tích.
 
+SỬA DANH SÁCH NGAY TRONG HỘI THOẠI (chỉ khi đang có chiến dịch)
+Người bán muốn chỉnh kết quả thì GỌI CÔNG CỤ, đừng viết lại bảng bằng tay — con số do code tính, bạn chỉ báo cáo:
+- "bỏ X đi, gợi ý người khác" → exclude_koc (tối đa 3 người/lần, truyền id lấy từ campaign_context). Công cụ tự chọn người thay thế và chia lại tiền; báo cáo đúng danh sách MỚI nó trả về. Đổi ý ("thôi cho X vào lại") → exclude_koc với undo=true.
+- "tôi chỉ có 60 triệu" / "cho tôi 8 người" → update_criteria. KHÔNG dùng nó để đổi sản phẩm/ngành/độ tuổi — việc đó cần một lượt tìm KOC mới, hãy nói thẳng với người bán.
+- "xem kỹ video của X" → deepen_koc, MỘT người mỗi lần. Xin cả danh sách thì từ chối và hỏi họ muốn xem ai trước, vì đây là bước tốn tiền nhất.
+Chỉ gọi khi người bán THẬT SỰ yêu cầu. Đừng tự loại ai, đừng tự đổi ngân sách, dù bạn thấy nên làm vậy — nói ra ý kiến rồi để họ quyết.
+
 SO SÁNH NGOÀI DANH SÁCH
 Người bán nhắc một KOC không nằm trong chiến dịch đang xem thì cứ search_creators tìm rồi đọc dữ liệu của họ — không còn bị giới hạn trong shortlist nữa.`;
 
@@ -151,6 +158,10 @@ const TITLES: Record<string, (input: Record<string, unknown>) => string> = {
   list_campaigns: () => "Lấy danh sách chiến dịch",
   campaign_context: () => "Đọc chiến dịch: tiêu chí, điểm, ngân sách",
   allocate_budget: (i) => `Tính phương án chia ngân sách${Number(i.total) ? ` ${Math.round(Number(i.total) / 1e6).toLocaleString("vi-VN")} triệu` : ""}`,
+  exclude_koc: (i) => `Bỏ ${Array.isArray(i.creator_ids) ? i.creator_ids.length : 1} KOC & chọn người thay thế`,
+  update_criteria: (i) =>
+    `Sửa tiêu chí (${[Number(i.koc_count) ? `${Number(i.koc_count)} KOC` : "", Number(i.budget_total) ? `ngân sách ${Math.round(Number(i.budget_total) / 1e6).toLocaleString("vi-VN")} triệu` : "", Number(i.budget_max_per_koc) ? "trần mỗi KOC" : "", Number(i.budget_min_per_koc) ? "sàn mỗi KOC" : ""].filter(Boolean).join(", ") || "—"}) & chọn lại`,
+  deepen_koc: () => "Xem video của KOC được chỉ định & chấm lại",
   WebSearch: (i) => `Tìm kiếm trên web: ${String(i.query ?? "")}`,
   WebFetch: (i) => `Đọc trang web: ${String(i.url ?? "").replace(/^https?:\/\/(www\.)?/, "").slice(0, 60)}`,
 };
@@ -166,9 +177,9 @@ function webLinks(text: string): { title: string; url: string }[] {
     }
   return [...new Set(text.match(/https?:\/\/[^\s"')\]]+/g) ?? [])].map((url) => ({ title: url, url }));
 }
-const KIND: Record<string, StepKind> = { get_peers: "peers", list_videos: "videos", analyze_videos: "videos" };
+const KIND: Record<string, StepKind> = { get_peers: "peers", list_videos: "videos", analyze_videos: "videos", deepen_koc: "videos", exclude_koc: "conclusion", update_criteria: "conclusion" };
 /** Công cụ có hàng vẽ được thành bảng. */
-const TABLE_TOOLS = new Set(["list_products", "category_breakdown", "list_videos", "get_peers", "analyze_videos", "campaign_context", "allocate_budget"]);
+const TABLE_TOOLS = new Set(["list_products", "category_breakdown", "list_videos", "get_peers", "analyze_videos", "campaign_context", "allocate_budget", "exclude_koc", "update_criteria", "deepen_koc"]);
 
 /** Dòng tóm tắt ngắn cho thẻ: lấy câu đầu của summary. */
 const shortDetail = (summary: string) => {

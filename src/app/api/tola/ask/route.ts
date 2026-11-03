@@ -31,11 +31,19 @@ export async function POST(req: Request) {
       let markdown = "";
       let unverified: string[] = [];
       let followUps: string[] = [];
+      /** Chiến dịch gắn với hội thoại — khai báo ngoài try để khối lưu ở dưới còn thấy. */
+      let activeCampaignId: string | undefined = campaignId;
 
       try {
         const db = await getDb();
-        const thread = await db.collection(C.tolaChats).findOne({ _id: threadId as never }, { projection: { messages: 1 } });
+        const thread = await db.collection(C.tolaChats).findOne({ _id: threadId as never }, { projection: { messages: 1, campaign_id: 1 } });
         const history = ((thread?.messages as ChatMessage[]) ?? []).slice(-8);
+        /**
+         * Chiến dịch của hội thoại này. Phải lấy lại từ `tola_chats`: phân tích sâu chạy ở MỘT lượt,
+         * nhưng các lượt sau ("bỏ người này đi") mới là lúc cần sửa nó — không nhớ lại thì agent mất
+         * hẳn `campaign_context` và các công cụ ghi.
+         */
+        const prevCampaign = (thread?.campaign_id as string) || undefined;
 
         const mentions = await resolveMentions(text);
         send({ type: "plan", steps: [], agent: true });
@@ -63,6 +71,7 @@ export async function POST(req: Request) {
           }
         }
         const offset = steps.length;
+        activeCampaignId = campaignId ?? deepCampaign ?? prevCampaign;
 
         const ctx = [
           mentionContext(mentions),
@@ -78,7 +87,7 @@ export async function POST(req: Request) {
           history,
           mentioned: mentions.found,
           context: ctx,
-          campaignId: campaignId ?? deepCampaign ?? undefined,
+          campaignId: activeCampaignId,
         })) {
           // Dời chỉ số bước của agent xuống sau các bước pipeline đã phát ở trên
           const shifted = e.type === "step_done" || e.type === "step_start" ? { ...e, index: e.index + offset } : e;
@@ -114,7 +123,7 @@ export async function POST(req: Request) {
                 ],
               },
             } as never,
-            $set: { updated_at: now, ...(campaignId ? { campaign_id: campaignId } : {}), ...(existing?.title ? {} : { title: text.slice(0, 80) }) },
+            $set: { updated_at: now, ...(activeCampaignId ? { campaign_id: activeCampaignId } : {}), ...(existing?.title ? {} : { title: text.slice(0, 80) }) },
             $setOnInsert: { created_at: now },
           },
           { upsert: true },

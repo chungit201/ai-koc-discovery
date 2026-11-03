@@ -63,8 +63,11 @@ function toText(r: ToolResult): string {
 
 /** Công cụ không đọc dữ liệu của riêng một KOC → không chèn `creator_id`. */
 const GLOBAL_TOOLS = new Set(["search_creators", "list_campaigns"]);
-/** Chỉ có nghĩa khi đang nói về một chiến dịch cụ thể. */
-const CAMPAIGN_TOOLS = new Set(["campaign_context", "allocate_budget"]);
+/**
+ * Chỉ có nghĩa khi đang nói về một chiến dịch cụ thể — không có `KOC_CAMPAIGN` thì agent không
+ * thấy chúng trong `tools/list`, nên không thể sửa một chiến dịch mà nó không đang xem.
+ */
+const CAMPAIGN_TOOLS = new Set(["campaign_context", "allocate_budget", "exclude_koc", "update_criteria", "deepen_koc"]);
 
 /** Chat chiến dịch: thêm tham số `creator_id` cho các công cụ đọc dữ liệu một KOC. */
 function withCreator(name: string, schema: Record<string, unknown>): Record<string, unknown> {

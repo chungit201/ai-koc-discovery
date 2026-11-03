@@ -4,7 +4,9 @@ import type { Db } from "mongodb";
 import { getDb } from "../db/mongo";
 import { C } from "../db/collections";
 import { compact, pct, vnd } from "../format";
-import { analyseVideo } from "../pipeline/s4-video";
+import { analyseVideo, runS4 } from "../pipeline/s4-video";
+import { runS5 } from "../pipeline/s5-recommend";
+import { DEEPEN_MAX_KOCS, EXCLUDE_MAX_KOCS } from "../chat-rules";
 import { topBrand } from "../evidence/creator";
 import { categoryBreakdown, channelTotals, denominator, productFacts, UNCATEGORISED, type CategoryLevel } from "./facts";
 import { EXCLUDE_LABELS, focusPattern } from "../scoring/rules";
@@ -944,6 +946,176 @@ async function allocateBudget({ campaignId }: ToolCtx, args: Args): Promise<Out>
   return { type: "metric", summary, rows: out, numbers, source: { collection: C.campaigns, ref: campaignId } };
 }
 
+// ── Công cụ GHI: sửa chiến dịch ngay trong hội thoại ──────────────────────────
+/**
+ * Ba công cụ dưới đây là những công cụ DUY NHẤT được ghi vào DB. Chúng tồn tại vì sau khi Tola đưa
+ * ra danh sách, người bán thường muốn chỉnh ngay trong câu tiếp theo ("bỏ Ánh Ốc, gợi ý người khác",
+ * "tôi chỉ có 60 triệu", "xem kỹ video của Phương Sena hơn") — trước đây phải tạo lại chiến dịch.
+ *
+ * Nguyên tắc giữ nguyên như pipeline: **code quyết định con số**, agent chỉ giải thích. Mỗi công cụ
+ * chạy lại đúng bước cần chạy rồi trả về danh sách MỚI để agent báo cáo:
+ *   exclude_koc / update_criteria → S5 (chọn + chia tiền + lý do; 1 lần gọi Haiku, có cache)
+ *   deepen_koc                    → S4 (xem video, cache theo video nên chỉ tốn tiền cho video mới) → S5
+ *
+ * Không có công cụ nào chạy lại S2: chấm điểm lại sẽ xoá kết quả S3/S4 (xem `scoreCampaign`), tức
+ * là mất toàn bộ phần đọc nội dung và xem video. Muốn đổi sản phẩm/ngành thì hỏi một câu mới —
+ * route sẽ nhận ra đó là brief và chạy phân tích sâu từ đầu.
+ */
+
+/** Danh sách sau khi chỉnh — mọi công cụ ghi đều trả về cùng một dạng để agent báo cáo nhất quán. */
+async function lineupOut(campaignId: string, head: string, extra: Record<string, number> = {}): Promise<Out> {
+  const { camp, rows, picks } = await campaignRows(campaignId);
+  const wanted = num(camp.koc_count) || picks.length;
+  const chosen = rows.filter((r) => r.picked);
+  const numbers: Record<string, number> = { picked: picks.length, wanted, shortlisted: rows.length, ...extra };
+  if (num(camp.s5?.allocated)) numbers.allocated = num(camp.s5.allocated);
+  if (num(camp.budget_total)) numbers.budget_total = num(camp.budget_total);
+  chosen.forEach((r, i) => {
+    numbers[`k${i + 1}_total`] = r.total;
+    numbers[`k${i + 1}_followers`] = r.followers;
+    numbers[`k${i + 1}_revenue`] = r.revenue;
+    if (r.budget) numbers[`k${i + 1}_budget`] = r.budget;
+  });
+  return {
+    type: "metric",
+    summary:
+      `${head} Danh sách MỚI: ${chosen.length}/${wanted} KOC` +
+      (num(camp.s5?.allocated) ? `, chia ${vnd(num(camp.s5.allocated))}` : "") +
+      (chosen.length < wanted ? ` — KHÔNG đủ ${wanted} người: shortlist chỉ còn ${rows.length} người đạt tiêu chí, hãy nói thẳng điều này.` : ".") +
+      " " +
+      chosen
+        .map((r) => `#${chosen.indexOf(r) + 1} ${r.name} (id ${r.creator_id}): điểm ${r.total}; ${compact(r.followers)} follower; ngân sách ${vnd(r.budget)}`)
+        .join(" || ") +
+      ` || Dự phòng: ${rows.filter((r) => !r.picked).slice(0, 5).map((r) => `${r.name} (điểm ${r.total})`).join(", ") || "không còn ai"}`,
+    rows,
+    numbers,
+    source: { collection: C.campaigns, ref: campaignId },
+  };
+}
+
+async function excludeKoc({ campaignId }: ToolCtx, args: Args): Promise<Out> {
+  if (!campaignId) throw new Error("Chưa có chiến dịch nào trong hội thoại này — chỉ dùng được sau khi đã chạy phân tích tìm KOC");
+  const ids = (Array.isArray(args.creator_ids) ? args.creator_ids : []).map(String).filter(Boolean);
+  if (!ids.length) throw new Error("creator_ids rỗng — lấy đúng id từ campaign_context, đừng truyền tên");
+  if (ids.length > EXCLUDE_MAX_KOCS)
+    throw new Error(`Mỗi lần chỉ bỏ tối đa ${EXCLUDE_MAX_KOCS} KOC để đề xuất không bị xáo trộn quá nhiều — hỏi lại người bán xem cụ thể muốn bỏ ai`);
+
+  const { rows } = await campaignRows(campaignId);
+  const byId = new Map(rows.map((r) => [r.creator_id, r]));
+  const bad = ids.filter((id) => !byId.has(id));
+  if (bad.length) throw new Error(`creator_id ${bad.join(", ")} không có trong danh sách của chiến dịch — lấy id từ campaign_context`);
+
+  const db = await getDb();
+  // `undo` để đưa người đã bỏ quay lại — người bán đổi ý là chuyện thường, không có đường về thì
+  // hội thoại bị kẹt và cách duy nhất là chạy lại cả phân tích.
+  const undo = args.undo === true;
+  await db
+    .collection(C.campaigns)
+    .updateOne({ _id: campaignId as never }, (undo ? { $pull: { excluded_creator_ids: { $in: ids } } } : { $addToSet: { excluded_creator_ids: { $each: ids } } }) as never);
+  await runS5(campaignId); // chọn lại trong shortlist còn lại, chia lại tiền, viết lại lý do
+  const names = ids.map((id) => byId.get(id)!.name).join(", ");
+  return lineupOut(
+    campaignId,
+    undo
+      ? `Đã ĐƯA ${names} trở lại danh sách xét chọn và chọn lại (họ chỉ vào danh sách nếu điểm đủ cao).`
+      : `Đã BỎ ${names} khỏi chiến dịch${args.reason ? ` (lý do người bán nêu: ${String(args.reason).slice(0, 120)})` : ""} và chọn người thay thế từ danh sách dự phòng.`,
+    { [undo ? "restored" : "excluded"]: ids.length },
+  );
+}
+
+/** Các tiêu chí sửa được mà KHÔNG phải chấm điểm lại — chỉ ảnh hưởng bước chọn và chia tiền. */
+const EDITABLE = ["koc_count", "budget_total", "budget_min_per_koc", "budget_max_per_koc"] as const;
+
+async function updateCriteria({ campaignId }: ToolCtx, args: Args): Promise<Out> {
+  if (!campaignId) throw new Error("Chưa có chiến dịch nào trong hội thoại này — chỉ dùng được sau khi đã chạy phân tích tìm KOC");
+  const patch: Record<string, number> = {};
+  for (const k of EDITABLE) {
+    const v = Number(args[k]);
+    if (args[k] === undefined || args[k] === null) continue;
+    if (!Number.isFinite(v) || v <= 0) throw new Error(`${k} phải là số > 0 (ngân sách tính bằng VND, vd 60 triệu → 60000000)`);
+    patch[k] = k === "koc_count" ? int(v, 5, 15) : Math.round(v);
+  }
+  if (!Object.keys(patch).length) throw new Error(`Không có gì để sửa — chỉ sửa được: ${EDITABLE.join(", ")}. Đổi sản phẩm/ngành thì phải chạy phân tích mới.`);
+
+  const db = await getDb();
+  const before = await db.collection(C.campaigns).findOne({ _id: campaignId as never }, { projection: { koc_count: 1, budget_total: 1, budget_max_per_koc: 1, budget_min_per_koc: 1 } });
+  if (!before) throw new Error("Không tìm thấy chiến dịch");
+  // Ghi cả ở cấp ngoài (S5 đọc chỗ này) và trong `criteria` (nguồn hiển thị của campaign_context)
+  const set: Record<string, unknown> = { ...patch };
+  for (const [k, v] of Object.entries(patch)) set[`criteria.${k}`] = v;
+  await db.collection(C.campaigns).updateOne({ _id: campaignId as never }, { $set: set });
+  await runS5(campaignId);
+
+  const changes = Object.entries(patch)
+    .map(([k, v]) => `${k}: ${num(before[k]) ? (k === "koc_count" ? String(num(before[k])) : vnd(num(before[k]))) : "chưa đặt"} → ${k === "koc_count" ? String(v) : vnd(v)}`)
+    .join("; ");
+  // Trần chi phí mỗi KOC còn là một bộ lọc cứng ở bước chấm điểm (S2): nới trần ở đây không gọi
+  // những người đã bị loại quay lại được, phải nói rõ kẻo người bán tưởng đã xét lại cả pool.
+  const capWarn =
+    patch.budget_max_per_koc && patch.budget_max_per_koc > num(before.budget_max_per_koc)
+      ? " LƯU Ý phải nói với người bán: nới trần chi phí/KOC chỉ áp lại ở bước chọn trong danh sách hiện có; những KOC từng bị loại vì vượt trần cũ muốn được xét lại thì cần chạy phân tích mới."
+      : "";
+  return lineupOut(campaignId, `Đã sửa tiêu chí (${changes}) và chọn lại.${capWarn}`, patch);
+}
+
+async function deepenKoc({ campaignId }: ToolCtx, args: Args): Promise<Out> {
+  if (!campaignId) throw new Error("Chưa có chiến dịch nào trong hội thoại này — chỉ dùng được sau khi đã chạy phân tích tìm KOC");
+  const ids = (Array.isArray(args.creator_ids) ? args.creator_ids : args.creator_id ? [args.creator_id] : []).map(String).filter(Boolean);
+  if (!ids.length) throw new Error("Chưa biết xem video của ai — truyền creator_id lấy từ campaign_context");
+  if (ids.length > DEEPEN_MAX_KOCS)
+    throw new Error("Xem video là bước tốn thời gian và tiền nhất nên mỗi lần chỉ xem cho 1 KOC — hỏi người bán xem họ muốn xem kỹ ai trước");
+  const id = ids[0];
+
+  const { rows } = await campaignRows(campaignId);
+  const row = rows.find((r) => r.creator_id === id);
+  if (!row) throw new Error(`creator_id ${id} không có trong danh sách của chiến dịch — lấy id từ campaign_context`);
+
+  const db = await getDb();
+  // `pickVideos` của S4 luôn xem KOC nằm trong `deep_creator_ids`, kể cả khi họ ngoài top hoặc
+  // vượt trần chi phí: đây là yêu cầu đích danh của người bán, không phải thứ hạng.
+  await db.collection(C.campaigns).updateOne({ _id: campaignId as never }, { $addToSet: { deep_creator_ids: id } as never });
+  const s4 = await runS4(campaignId); // cache theo video → chỉ video chưa từng xem mới tốn tiền
+  await runS5(campaignId); // điểm đổi thì danh sách chọn có thể đổi theo
+
+  const score = await db.collection(C.campaignScores).findOne({ campaign_id: campaignId, creator_id: id }, { projection: { s4: 1, s4_total: 1, s4_rank: 1 } });
+  const videos = ((score?.s4?.videos ?? []) as Record<string, unknown>[]).map((v) => ({
+    video_id: String(v.video_id),
+    title: String(v.title ?? ""),
+    product_match: Boolean(v.product_match),
+    video_score: num(v.video_score),
+    demo_score: num(v.demo_score),
+    production_quality: num(v.production_quality),
+    authenticity: num(v.authenticity),
+    summary: String(v.summary ?? ""),
+  }));
+  const numbers: Record<string, number> = { videos: videos.length, s4_total: num(score?.s4_total), s4_rank: num(score?.s4_rank), video_score: num(score?.s4?.score) };
+  videos.forEach((v, i) => {
+    numbers[`v${i + 1}_video_score`] = v.video_score;
+    numbers[`v${i + 1}_demo_score`] = v.demo_score;
+    numbers[`v${i + 1}_production_quality`] = v.production_quality;
+    numbers[`v${i + 1}_authenticity`] = v.authenticity;
+  });
+
+  const head = videos.length
+    ? `Đã XEM video của ${row.name} (AI đọc 4 khung hình/video, KHÔNG có âm thanh): ` +
+      videos
+        .map(
+          (v) =>
+            `“${v.title.slice(0, 60)}” — ${v.product_match ? "CÓ" : "KHÔNG"} thấy sản phẩm của chiến dịch; điểm video ${v.video_score}/100 (demo ${v.demo_score}, hình ${v.production_quality}, tự nhiên ${v.authenticity}); ${v.summary}`,
+        )
+        .join(" || ") +
+      ` || Điểm tổng sau khi xem video: ${num(score?.s4_total)} (hạng ${num(score?.s4_rank)} trong danh sách).`
+    : `Không xem được video nào của ${row.name} — KOC này chưa có video nào tải được khung hình. Nói thẳng, đừng suy đoán nội dung.`;
+  // KOC đã bị bỏ vẫn xem video được (người bán có thể muốn xét lại), nhưng điểm mới KHÔNG tự đưa họ
+  // về danh sách — nói rõ kẻo agent hứa sai.
+  const camp = await db.collection(C.campaigns).findOne({ _id: campaignId as never }, { projection: { excluded_creator_ids: 1 } });
+  const stillOut = ((camp?.excluded_creator_ids as string[]) ?? []).includes(id)
+    ? ` LƯU Ý: ${row.name} đang nằm trong danh sách người bán đã BỎ nên dù điểm thay đổi vẫn không được chọn lại — muốn đưa họ về thì gọi exclude_koc với undo=true.`
+    : "";
+  const out = await lineupOut(campaignId, head + stillOut, numbers);
+  return { ...out, type: "video", cost_usd: s4?.cost_usd ?? 0 };
+}
+
 // ── calc ──────────────────────────────────────────────────────────────────────
 /** Sai số cho phép khi đối chiếu input của `calc` với số đã có (số tóm tắt bị làm tròn khi agent chép lại). */
 const TOLERANCE = 0.005;
@@ -1089,6 +1261,39 @@ export const KOC_TOOLS: ToolSpec[] = [
       ["total"],
     ),
     run: allocateBudget,
+  },
+  {
+    name: "exclude_koc",
+    description:
+      "GHI: BỎ KOC khỏi chiến dịch rồi tự chọn người thay thế từ danh sách dự phòng và chia lại ngân sách. Dùng khi người bán nói không muốn hợp tác với ai đó ('bỏ Ánh Ốc đi, gợi ý người khác'). Người bán đổi ý thì gọi lại với undo=true để đưa họ về. Tối đa 3 người mỗi lần. Trả về danh sách MỚI — báo cáo đúng danh sách này.",
+    input_schema: obj(
+      {
+        creator_ids: { type: "array", items: { type: "string" }, maxItems: EXCLUDE_MAX_KOCS, description: "id KOC cần bỏ, lấy từ campaign_context (không phải tên)" },
+        reason: { type: "string", description: "Lý do người bán nêu, nếu có — chỉ để ghi lại" },
+        undo: { type: "boolean", description: "true = ĐƯA những người này TRỞ LẠI danh sách xét chọn (người bán đổi ý sau khi đã bỏ)" },
+      },
+      ["creator_ids"],
+    ),
+    run: excludeKoc,
+  },
+  {
+    name: "update_criteria",
+    description:
+      "GHI: sửa SỐ KOC hoặc NGÂN SÁCH của chiến dịch rồi chọn lại và chia lại tiền. Dùng khi người bán đổi ý ('tôi chỉ có 60 triệu', 'cho tôi 8 người'). Chỉ sửa được 4 tham số này; muốn đổi sản phẩm/ngành/độ tuổi thì KHÔNG dùng công cụ này, hãy nói người bán hỏi một câu tìm KOC mới. Trả về danh sách MỚI.",
+    input_schema: obj({
+      koc_count: { type: "integer", minimum: 1, maximum: 15 },
+      budget_total: { type: "number", description: "Tổng ngân sách VND (60 triệu → 60000000)" },
+      budget_min_per_koc: { type: "number", description: "Ngân sách tối thiểu mỗi KOC, VND" },
+      budget_max_per_koc: { type: "number", description: "Trần ngân sách mỗi KOC, VND" },
+    }),
+    run: updateCriteria,
+  },
+  {
+    name: "deepen_koc",
+    description:
+      "GHI: cho AI XEM VIDEO của MỘT KOC trong chiến dịch (4 khung hình/video, không có âm thanh) để kiểm chứng họ có thật sự demo sản phẩm, rồi cập nhật điểm và chọn lại. Dùng khi người bán muốn xem kỹ một người cụ thể. Chỉ 1 KOC mỗi lần vì đây là bước tốn tiền và chậm nhất — không bao giờ gọi cho cả danh sách.",
+    input_schema: obj({ creator_id: { type: "string", description: "id KOC muốn xem video, lấy từ campaign_context" } }, ["creator_id"]),
+    run: deepenKoc,
   },
   {
     name: "calc",

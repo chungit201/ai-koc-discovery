@@ -37,15 +37,23 @@ File chính: `lib/tola-deep.ts`, `app/api/tola/ask/route.ts`, `lib/chat-creator-
   mobile / bảng đủ cột ở desktop), logomark + tên Tola trong pill, animation ánh sáng lướt.
 - Dọn code chết của trang chiến dịch (commit cuối).
 
+- **Sửa danh sách ngay trong hội thoại** bằng 3 công cụ GHI (những công cụ duy nhất được ghi DB),
+  chỉ hiện khi hội thoại đang có chiến dịch (`CAMPAIGN_TOOLS` trong `scripts/koc-mcp.ts`):
+  | công cụ | người bán nói | chạy lại |
+  |---|---|---|
+  | `exclude_koc` (`undo` để đưa về) | "bỏ Ánh Ốc, tìm người khác" | S5 |
+  | `update_criteria` (số KOC, 3 mức ngân sách) | "tôi chỉ có 60 triệu" | S5 |
+  | `deepen_koc` (1 người/lần) | "xem kỹ video của Phương Sena" | S4 → S5 |
+
+  Không công cụ nào chạy lại S2 — chấm điểm lại sẽ xoá kết quả S3/S4. Đổi sản phẩm/ngành thì hỏi
+  một câu mới, route sẽ nhận ra là brief và chạy phân tích sâu từ đầu. `tola_chats.campaign_id` giờ
+  được lưu cả khi chiến dịch sinh ra từ phân tích sâu, nên các lượt sau vẫn sửa được.
+
 ## Việc tiếp theo
 
-1. **Công cụ ghi cho Tola** (phần còn lại của bước 2, chưa bắt đầu): `update_criteria`,
-   `exclude_koc`, `deepen_koc` để câu "bỏ Ánh Ốc, gợi ý người khác" chạy được trong hội thoại.
-   Trần số lượng cũ (`limitDeepen`, `limitExclude`, `DEEPEN_MAX_KOCS=1`, `EXCLUDE_MAX_KOCS=3`) lấy
-   lại trong git history của `src/lib/chat-rules.ts`.
-2. Ẩn sidebar của app ở `/tola` — desktop đang có hai cột trái.
-3. Nút `@` nên mở danh sách chọn KOC thay vì chỉ chèn ký tự.
-4. Tối ưu chi phí (người dùng chốt: chạy đúng trước, tối ưu sau).
+1. Ẩn sidebar của app ở `/tola` — desktop đang có hai cột trái.
+2. Nút `@` nên mở danh sách chọn KOC thay vì chỉ chèn ký tự.
+3. Tối ưu chi phí (người dùng chốt: chạy đúng trước, tối ưu sau).
 
 ## Lưu ý khi sửa
 
