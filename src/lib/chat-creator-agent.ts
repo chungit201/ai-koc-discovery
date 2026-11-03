@@ -162,6 +162,11 @@ const TITLES: Record<string, (input: Record<string, unknown>) => string> = {
   get_peers: () => "So sánh với KOC cùng tầm",
   analyze_videos: (i) => `Xem ${Array.isArray(i.video_ids) && i.video_ids.length ? i.video_ids.length : 3} video (4 khung hình/video)`,
   calc: (i) => `Tính toán (${String(i.op ?? "")})`,
+  search_creators: (i) =>
+    `Tìm KOC${i.product ? ` bán ${String(i.product)}` : ""}${i.q ? ` tên '${String(i.q)}'` : ""}${
+      i.min_revenue ? ` doanh thu ≥ ${Math.round(Number(i.min_revenue) / 1e6).toLocaleString("vi-VN")} triệu` : ""
+    }${i.mcn === "no" ? " chưa ký MCN" : i.mcn === "yes" ? " đã ký MCN" : ""}`.replace(/\s+/g, " "),
+  list_campaigns: () => "Lấy danh sách chiến dịch",
   campaign_context: () => "Đọc chiến dịch: tiêu chí, điểm, ngân sách",
   allocate_budget: (i) => `Tính phương án chia ngân sách${Number(i.total) ? ` ${Math.round(Number(i.total) / 1e6).toLocaleString("vi-VN")} triệu` : ""}`,
   WebSearch: (i) => `Tìm kiếm trên web: ${String(i.query ?? "")}`,

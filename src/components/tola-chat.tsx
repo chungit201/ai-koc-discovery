@@ -149,9 +149,16 @@ export function TolaChat({ initialMessages = [], threadId: initialThread }: { in
               {live.steps.map((s, i) => (
                 <StepCard key={i} index={i} title={s.title} detail={s.detail} done={s.done} running={!s.done} animate />
               ))}
-              {!live.steps.length && (
-                <p className="flex items-center gap-2 text-[14px] text-ink-muted">
-                  <Loader2 size={15} className="animate-spin text-brand" /> {AI_NAME} đang đọc câu hỏi…
+              {/**
+               * Giữa thẻ công cụ cuối và câu trả lời có một khoảng 20–40 giây model viết bài mà
+               * KHÔNG phát sự kiện nào (nó nằm bên trong vòng lặp của claudeAgent, không biết trước
+               * lúc nào model ngừng gọi công cụ để chuyển sang viết). Thiếu dòng này thì màn hình
+               * đứng im và người dùng tưởng hỏng.
+               */}
+              {live.steps.every((s) => s.done) && (
+                <p className="flex items-center gap-2 px-1 py-1 text-[14px] text-ink-muted">
+                  <Loader2 size={15} className="shrink-0 animate-spin text-brand" />
+                  {live.steps.length ? `${AI_NAME} đang viết câu trả lời…` : `${AI_NAME} đang đọc câu hỏi…`}
                 </p>
               )}
             </div>
