@@ -4,11 +4,9 @@ import type { Db } from "mongodb";
 import { getDb } from "./db/mongo";
 import { C } from "./db/collections";
 import { claudeAgent } from "./llm/claude";
-import { validateReasons, type Reason } from "./evidence/validate";
 import { asksAboutVoice } from "./chat-rules";
-import { autoCite } from "./chat-creator";
 import { citationsIn, verifyAnswer } from "./answer-verify";
-import type { AnswerBlock, AskEvent, StepKind, StepPayload, ToolTable } from "./chat-events";
+import type { AskEvent, StepKind, StepPayload, ToolTable } from "./chat-events";
 import type { ChatMessage } from "./chat";
 
 /**
@@ -43,7 +41,7 @@ Nguồn 2 (phụ): WebSearch / WebFetch — CHỈ dùng khi câu hỏi nằm ngo
 
 /**
  * Đầu prompt của **trợ lý Tola** — một lối vào cho mọi câu hỏi, thay cho hai prompt tách riêng
- * trước đây (`INTRO_KOC` cho trang hồ sơ, `INTRO_CAMPAIGN` cho trang chiến dịch). Ngữ cảnh "đang hỏi
+ * trước đây (một prompt cho trang hồ sơ KOC, một cho trang chiến dịch — trang đó đã bỏ). Ngữ cảnh "đang hỏi
  * về ai" do tag `@handle` trong câu quyết định (`lib/mentions.ts`), không phụ thuộc trang đang mở.
  */
 const INTRO_TOLA = `[${AGENT_PROMPT_VERSION}-tola] Bạn là Tola — trợ lý phân tích KOC TikTok Shop mỹ phẩm Việt Nam, trả lời người bán hàng.
@@ -62,27 +60,6 @@ BẮT ĐẦU TỪ ĐÂU
 
 SO SÁNH NGOÀI DANH SÁCH
 Người bán nhắc một KOC không nằm trong chiến dịch đang xem thì cứ search_creators tìm rồi đọc dữ liệu của họ — không còn bị giới hạn trong shortlist nữa.`;
-
-/** Đầu prompt cho chat chiến dịch (câu hỏi giải thích / so sánh / thông tin ngoài dữ liệu). */
-const INTRO_CAMPAIGN = `[${AGENT_PROMPT_VERSION}-campaign] Bạn là chuyên viên phân tích KOC TikTok Shop mỹ phẩm Việt Nam, trả lời người bán hàng về MỘT CHIẾN DỊCH đã chạy: danh sách KOC được chọn + dự phòng.
-Nguồn 1 (chính): công cụ mcp__koc__*. Gọi campaign_context ĐẦU TIÊN (tiêu chí, điểm từng thành phần, ngân sách đã chia, bằng chứng chấm điểm của từng KOC). Các công cụ còn lại đọc dữ liệu MỘT KOC — truyền creator_id lấy từ campaign_context.
-Nguồn 2 (phụ): WebSearch / WebFetch — CHỈ khi câu hỏi nằm ngoài dữ liệu Kalodata (phốt, tiểu sử, thương hiệu, tin tức…).
-
-CHIẾN DỊCH
-- Điểm phù hợp và xếp hạng là KẾT QUẢ của hệ thống (code chấm theo tiêu chí): giải thích bằng điểm thành phần + bằng chứng, KHÔNG tự chấm lại.
-- "Vì sao chọn A" / "vì sao không chọn B": so điểm thành phần của A với B (campaign_context), rồi đọc thêm dữ liệu thật của cả hai (get_overview, list_products, analyze_videos… với creator_id) để chỉ ra khác biệt cụ thể. Gọi song song cho các KOC.
-- So sánh nhiều KOC: cùng một công cụ cho từng KOC, chênh lệch tính bằng calc. Có thể chèn bảng {"type":"table","source":"<evidence_id của campaign_context>"}.
-
-NGÂN SÁCH — TRẢ LỜI, ĐỪNG ĐÙN
-Hỏi "chia ngân sách thế nào", "book N người thì mỗi người bao nhiêu", hoặc đưa ra một con số ngân sách: BẮT BUỘC gọi allocate_budget (total = đúng số họ nói, creator_ids = nhóm họ đang nói tới) và trả về một PHƯƠNG ÁN CỤ THỂ, kèm bảng {"type":"table","source":"<evidence_id của allocate_budget>"}.
-- TUYỆT ĐỐI KHÔNG trả lời kiểu "việc này do hệ thống tính", "bạn cần nhắn rõ yêu cầu để hệ thống chạy lại". Họ đã hỏi bạn rồi — một phương án tham khảo có căn cứ là thứ họ cần, nói rõ đây là đề xuất và hệ thống sẽ chốt lại khi chạy bước đề xuất.
-- Khai thác điều dữ liệu Kalodata KHÔNG có: giá chào thật của KOC. Nhưng bạn CÓ chi phí ước tính/video theo quy mô follower — dùng nó để nói điều đáng giá nhất: KOC nào ngốn phần lớn ngân sách chỉ cho 1 video, KOC nào đủ tiền làm nhiều video, cả nhóm có vừa ngân sách không. Luôn nói rõ đây là ước tính, không phải báo giá.
-- Nếu chiến dịch đã chạy bước đề xuất (đã có ngân sách chia sẵn): trình bày con số đã chia, KHÔNG tự chia lại.
-- Người dùng muốn ĐỔI tiêu chí (bỏ KOC, đổi số lượng…): cứ trả lời phần phân tích, rồi nói hệ thống đang chạy lại với thay đổi đó — đừng bắt họ nhắn lại.
-
-GIỌNG VĂN
-Viết như một người tư vấn đã làm nghề, không như một hệ thống báo cáo trạng thái. Mở đầu bằng CÂU TRẢ LỜI, không bằng tình trạng nội bộ. Từ ngữ nội bộ ("dự phòng", "chốt chọn", "shortlist", "pipeline", "bước S5") không được xuất hiện ở khối đầu tiên.
-Đừng lặp lại bảng xếp hạng người dùng đang nhìn thấy trên màn hình trừ khi câu hỏi là về chính thứ hạng đó.`;
 
 const RULES = `
 CÂU HỎI NGOÀI DỮ LIỆU (vd "có gia đình chưa", "là ai", "có phải chủ thương hiệu không")
@@ -281,31 +258,6 @@ export async function* analyseCreatorAgent(creatorId: string, text: string, thre
     prompt: [`KOC: ${String(creator.nickname ?? "")} (${String(creator.handle ?? "")}).`, history ? `Hội thoại trước đó:\n${history}` : "", `Câu hỏi của người bán: ${text}`],
     env: { KOC_CREATOR: creatorId },
     purpose: "koc-agent",
-  });
-}
-
-/**
- * Chat chiến dịch — câu hỏi giải thích / so sánh / thông tin ngoài dữ liệu (docs/10-koc-agent.md,
- * mục chiến dịch). Agent đọc được mọi KOC trong danh sách được chọn + dự phòng của chiến dịch, cùng
- * công cụ `campaign_context`. Không đổi gì trong chiến dịch: việc đổi vẫn do `handleTurn` + bảng
- * `RERUN_FROM` quyết.
- */
-export async function* analyseCampaignAgent(campaignId: string, text: string, history: ChatMessage[], creatorIds: string[], names: Map<string, string>): AsyncGenerator<AskEvent> {
-  if (!creatorIds.length) {
-    yield { type: "error", message: "Chiến dịch chưa có KOC nào để phân tích" };
-    return;
-  }
-  const h = historyText(history);
-  yield* runAgent({
-    system: INTRO_CAMPAIGN + RULES,
-    prompt: [
-      `KOC trong chiến dịch (id → tên): ${creatorIds.map((id) => `${id} → ${names.get(id) ?? id}`).join("; ")}.`,
-      h ? `Hội thoại trước đó:\n${h}` : "",
-      `Câu hỏi của người bán: ${text}`,
-    ],
-    env: { KOC_CREATORS: creatorIds.join(","), KOC_CAMPAIGN: campaignId },
-    purpose: "campaign-agent",
-    names,
   });
 }
 
