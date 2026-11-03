@@ -1,0 +1,29 @@
+flowchart TD
+    P["runPipeline(id)"] --> P1{"lease_until còn hiệu lực?"}
+    P1 -->|có| PX["return — runner khác đang chạy"]
+    P1 -->|không| P2["claim lease 3 phút<br/>heartbeat mỗi 60s"]
+    P2 --> P3["planned = set(plan.steps)<br/>chỉ chạy bước AI đã lập"]
+
+    P3 --> S2["S2 score_fit — luôn chạy · 0 token"]
+    S2 --> S2a["lọc eligible → 6 điểm có trọng số<br/>sinh evidence → rank theo fit | revenue<br/>shortlist = min(60, max(15, n×3))"]
+    S2a --> DB1[("campaign_scores<br/>evidence<br/>campaigns.scoring")]
+
+    S2a --> F4["prefetchS4Frames() — tải keyframe song song"]
+    S2a --> S3{"planned screen_content?"}
+    S3 -->|có| S3a["S3 — Haiku đọc bio + tiêu đề video<br/>+ sản phẩm đã bán của shortlist"]
+    S3a --> DB2[("ai_assessments<br/>cache theo content_hash")]
+    S3a --> S4
+    S3 -->|không| S4
+    F4 --> S4
+
+    S4{"planned analyse_videos?"}
+    S4 -->|có| S4a["S4 — Sonnet xem keyframe<br/>min(10, max(6, n×2)) KOC × 2 video"]
+    S4a --> S5
+    S4 -->|không| S5
+
+    S5{"planned recommend?"}
+    S5 -->|"có (cần ngân sách)"| S5a["S5 — chọn n KOC trong ngân sách<br/>chia tiền + viết lý do kèm evidence"]
+    S5 -->|không| DONE
+    S5a --> DONE["pipeline.stage = done"]
+
+    P2 -.->|throw| ERR["pipeline_error<br/>→ trang hiện nút Tiếp tục"]

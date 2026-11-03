@@ -6,16 +6,33 @@
 }
 
 @theme {
-  /* Forest green accent (validated: chroma + contrast pass on light surface) */
-  --color-brand: #167045;
-  --color-brand-strong: #11593a;
-  --color-brand-soft: #eaf3ed;
-  --color-page: #f7f7f5;
-  --color-line: #e9e9e6;
-  --color-ink: #18181b;
-  --color-ink-muted: #71717a;
-  --shadow-card: 0 1px 2px rgb(24 24 27 / 0.04);
-  --shadow-pop: 0 8px 24px -12px rgb(22 112 69 / 0.45);
+  /**
+   * Periwinkle accent. Đã chạy validator của skill dataviz cùng 3 màu trạng thái
+   * (#2f9e7a / #c27a1a / #b4457f): đạt cả 5 kiểm tra — dải sáng, sàn chroma, tách màu cho người
+   * mù màu, và tương phản nền. Riêng `--color-brand` còn đạt 4,99:1 trên nền trắng nên dùng được
+   * cho chữ và link, không chỉ cho mảng màu.
+   */
+  --color-brand: #5b63d3;
+  --color-brand-strong: #474ead;
+  --color-brand-soft: #eef0fd;
+  --color-page: #f7f6fc;
+  --color-line: #e9e7f3;
+  --color-ink: #1c1b22;
+  --color-ink-muted: #6b6880;
+  --shadow-card: 0 1px 2px rgb(28 27 34 / 0.04);
+  --shadow-pop: 0 8px 24px -12px rgb(91 99 211 / 0.4);
+
+  /**
+   * Dải xám ngả tím nhẹ, ghi đè thẳng ramp `zinc` của Tailwind. Giao diện dùng zinc ở hàng trăm
+   * chỗ (nền thẻ phụ, chip, chữ phụ); để nguyên xám trung tính thì nó xỉn hẳn đi cạnh nền lavender.
+   * Đổi ở đây một lần, cả app dịu theo — không phải sửa từng component.
+   */
+  --color-zinc-50: #f8f7fb;
+  --color-zinc-100: #f1f0f7;
+  --color-zinc-200: #e6e4ef;
+  --color-zinc-300: #d2cfe0;
+  --color-zinc-500: #78748c;
+  --color-zinc-600: #5c5872;
 }
 
 a,button {
@@ -24,8 +41,19 @@ a,button {
 
 body {
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
-  background: var(--color-page);
   color: var(--color-ink);
+  /**
+   * Nền chuyển periwinkle → hồng, cố ý rất nhạt và dồn về hai góc trên: đủ để nhận ra sắc màu
+   * nhưng không cạnh tranh với nội dung. Thẻ vẫn trắng tinh nên chữ và số luôn nổi.
+   * `fixed` để nền không trôi theo trang — cuộn dài mà vẫn thấy cùng một mảng màu.
+   */
+  background-color: var(--color-page);
+  background-image:
+    radial-gradient(1100px 560px at 6% -12%, #e7e9fb 0%, transparent 62%),
+    radial-gradient(900px 520px at 100% -6%, #fbeaf4 0%, transparent 58%);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+  min-height: 100vh;
 }
 
 .num {
@@ -66,9 +94,41 @@ body {
 .animate-fade {
   animation: fade-in 0.25s ease-out both;
 }
+/* Tấm lọc trượt lên từ đáy màn hình (mobile) */
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+.animate-sheet {
+  animation: sheet-up 0.22s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+/**
+ * Vệt sáng lướt qua nút trợ lý. Lướt nhanh rồi nghỉ dài (vệt chỉ chiếm ~18% chu kỳ) — nút nằm cố
+ * định trên thanh tab, sáng liên tục thì thành nhấp nháy gây khó chịu.
+ */
+@keyframes shine {
+  0% {
+    transform: translateX(-60%) skewX(-18deg);
+  }
+  18%,
+  100% {
+    transform: translateX(420%) skewX(-18deg);
+  }
+}
+.animate-shine {
+  animation: shine 4.5s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-fade,
-  .animate-rise {
+  .animate-rise,
+  .animate-sheet,
+  .animate-shine {
     animation: none;
   }
 }

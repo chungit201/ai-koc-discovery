@@ -93,6 +93,21 @@ export function sanitizePlan(raw: Record<string, unknown>, criteria: Partial<Cri
     addQuestion(field, o.question.trim());
   }
 
+  /**
+   * Ràng buộc cứng: nêu ĐÍCH DANH một sản phẩm thì phải đọc nội dung và xem video để kiểm chứng KOC
+   * có thật sự bán/review món đó — số liệu danh mục không trả lời được câu đó. Luật này từng chỉ nằm
+   * trong lời dặn ở prompt nên Haiku bỏ qua được ("Tôi muốn tìm 5 KOC bán phấn nền" ra kế hoạch
+   * không có bước video).
+   *
+   * Chỉ nêu DANH MỤC (vd "KOC trang điểm, tương tác cao, ngân sách 50 triệu") thì KHÔNG ép: xem
+   * khung hình không kiểm chứng thêm được gì mà là bước đắt nhất, cứ để AI tự quyết.
+   */
+  if (criteria.product_focus) {
+    for (const cap of ["screen_content", "analyse_videos"] as const)
+      if (!seen.has(cap)) (seen.add(cap), steps.push({ capability: cap, title: CAPABILITIES[cap].title }));
+    steps.sort((a, b) => CAPABILITIES[a.capability].order - CAPABILITIES[b.capability].order);
+  }
+
   // Ràng buộc cứng: chia ngân sách mà không có ngân sách là bịa → bỏ bước và hỏi
   const planned = steps.map((s) => s.capability);
   if (planned.includes("recommend") && !hasBudget(criteria)) {

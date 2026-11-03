@@ -1,11 +1,12 @@
 "use client";
 
-import { ArrowUp, ArrowUpRight, CircleCheck, Expand, Globe, Loader2, MessageCircle, Plus, Sparkles, X } from "lucide-react";
+import { ArrowUp, ArrowUpRight, CircleCheck, Expand, Globe, Lightbulb, Loader2, MessageCircle, Plus, Sparkles, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import type { ChatMessage } from "@/lib/chat";
 import type { AnswerBlock, AskEvent, ReportData, StepKind, StepPayload, ToolTable } from "@/lib/chat-events";
+import { AnswerMarkdown } from "@/components/answer-markdown";
 import { Avatar } from "@/components/avatar";
 import { ProductThumb } from "@/components/product-thumb";
 import { VideoThumb } from "@/components/video-thumb";
@@ -461,7 +462,9 @@ function Bubble({ m, handle, onAsk }: { m: Shown; handle: string; onAsk: (q: str
                 </StepCard>
                 {s.kind === "conclusion" && (
                   <>
-                    {m.blocks?.length ? (
+                    {m.markdown ? (
+                      <AnswerMarkdown markdown={m.markdown} unverified={m.unverified} sources={sourcesOf(m.steps ?? [], m.id)} />
+                    ) : m.blocks?.length ? (
                       <Answer
                         blocks={m.blocks}
                         data={{ report: m.report, peers: m.peers, videos: m.videos }}
@@ -521,7 +524,11 @@ export function AgentMessage({ m, handle = "", onAsk }: { m: ChatMessage; handle
         </div>
       </details>
       <div className="pt-1">
-        <Answer blocks={m.blocks ?? []} data={{}} handle={handle} sources={sourcesOf(m.steps ?? [], m.id)} />
+        {m.markdown ? (
+          <AnswerMarkdown markdown={m.markdown} unverified={m.unverified} sources={sourcesOf(m.steps ?? [], m.id)} />
+        ) : (
+          <Answer blocks={m.blocks ?? []} data={{}} handle={handle} sources={sourcesOf(m.steps ?? [], m.id)} />
+        )}
       </div>
       {m.follow_ups && m.follow_ups.length > 0 && <FollowUps items={m.follow_ups} onAsk={onAsk} />}
     </div>
@@ -891,6 +898,7 @@ const SCORE_SHORT: Record<string, string> = {
   performance: "hiệu suất",
   content_fit: "hợp SP",
   engagement: "tương tác",
+  growth: "tăng trưởng",
   cost_fit: "ngân sách",
   consistency: "ổn định",
   audience_fit: "khán giả",
@@ -905,7 +913,8 @@ function ToolTableView({ table, handle, compact: small }: { table: ToolTable; ha
   const s = (v: unknown) => String(v ?? "");
   const n = (v: unknown) => (typeof v === "number" ? v : 0);
   const share = (v: unknown) => `${(Math.round(n(v) * 1000) / 10).toLocaleString("vi-VN")}%`;
-  const frame = `overflow-hidden rounded-lg border border-line bg-white ${small ? "max-h-[280px] overflow-y-auto" : ""}`;
+  // `overflow-x-auto` thay cho `overflow-hidden`: bảng nhiều cột trên điện thoại cuộn ngang được
+  const frame = `overflow-x-auto rounded-lg border border-line bg-white ${small ? "max-h-[280px] overflow-y-auto" : ""}`;
 
   if (table.tool === "list_products")
     return (
@@ -1077,6 +1086,63 @@ function ToolTableView({ table, handle, compact: small }: { table: ToolTable; ha
       </div>
     );
 
+  if (table.tool === "allocate_budget") {
+    const sum = rows.reduce((a, r) => a + n(r.budget), 0);
+    return (
+      <div className={frame}>
+        <table className="w-full text-[12.5px]">
+          <thead className="bg-zinc-50 text-left text-[11.5px] uppercase tracking-wide text-ink-muted">
+            <tr>
+              <th className="px-3 py-1.5 font-semibold">KOC</th>
+              <th className="px-3 py-1.5 text-right font-semibold">Ngân sách</th>
+              {!small && <th className="px-3 py-1.5 text-right font-semibold">Chi phí ước tính/video</th>}
+              <th className="px-3 py-1.5 text-right font-semibold">Đủ</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((k) => (
+              <tr key={s(k.creator_id)} className="border-t border-line">
+                <td className="px-3 py-1.5">
+                  <a href={`/kocs/${s(k.creator_id)}`} className="flex items-center gap-2 hover:text-brand">
+                    <Avatar id={s(k.creator_id)} name={s(k.name)} size={22} />
+                    <span className="truncate font-medium">{s(k.name)}</span>
+                    <span className="num text-[11px] text-ink-muted">{compact(n(k.followers))} fl</span>
+                  </a>
+                </td>
+                <td className="num px-3 py-1.5 text-right font-semibold">
+                  {vnd(n(k.budget))} <span className="font-normal text-ink-muted">· {share(k.share)}</span>
+                </td>
+                {!small && (
+                  <td className="num px-3 py-1.5 text-right text-zinc-600">
+                    {vnd(n(k.cost_min))}–{vnd(n(k.cost_max))}
+                  </td>
+                )}
+                <td className="num px-3 py-1.5 text-right">
+                  {k.affordable ? (
+                    <span className="text-zinc-600">{s(k.videos_min_cost)} video</span>
+                  ) : (
+                    <span className="rounded bg-amber-50 px-1.5 py-px text-amber-700">0 video</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr className="border-t border-line bg-zinc-50 font-semibold">
+              <td className="px-3 py-1.5">Tổng</td>
+              <td className="num px-3 py-1.5 text-right">{vnd(sum)}</td>
+              {!small && <td />}
+              <td />
+            </tr>
+          </tfoot>
+        </table>
+        <p className="px-3 py-1.5 text-[11px] text-ink-muted">
+          Chi phí/video là ước tính theo quy mô follower, không phải giá chào của KOC. &quot;Đủ&quot; = số video mua được ở mức thấp nhất của khoảng.
+        </p>
+      </div>
+    );
+  }
+
   if (table.tool === "get_peers")
     return (
       <div className={frame}>
@@ -1129,7 +1195,7 @@ function Answer({
    */
   const TABLE_COST = 60;
   const cost = (b: AnswerBlock) =>
-    b.type === "bullets" ? b.items.reduce((a, it) => a + it.text.length, 0) : b.type === "table" || b.type === "data" ? TABLE_COST : b.text.length;
+    b.type === "bullets" || b.type === "advice" ? b.items.reduce((a, it) => a + it.text.length, 0) : b.type === "table" || b.type === "data" ? TABLE_COST : b.text.length;
   const total = blocks.reduce((a, b) => a + cost(b), 0);
   const n = useReveal(total, Boolean(typing), onRevealed);
   const streaming = Boolean(typing) && n < total;
@@ -1175,6 +1241,33 @@ function Answer({
         <ul key={i} className="space-y-1.5">
           {items}
         </ul>,
+      );
+    } else if (b.type === "advice") {
+      // Nhận định nghề, không phải số liệu — dán nhãn rõ để người bán biết ranh giới giữa hai thứ
+      let left = part;
+      const items: React.ReactNode[] = [];
+      for (const [k, it] of b.items.entries()) {
+        if (left <= 0) break;
+        const shown = Math.min(it.text.length, left);
+        left -= it.text.length;
+        const cut = shown < it.text.length;
+        items.push(
+          <li key={k} className="flex gap-2">
+            <span className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-amber-500" />
+            <span>
+              {cut ? it.text.slice(0, shown) : it.text}
+              {cut ? <Caret /> : <SourceChips ids={it.evidence_ids} sources={sources} />}
+            </span>
+          </li>,
+        );
+      }
+      out.push(
+        <div key={i} className="space-y-1.5 rounded-xl border border-amber-200 bg-amber-50/60 px-3.5 py-3 text-[13.5px]">
+          <p className="flex items-center gap-1.5 text-[12px] font-semibold text-amber-800">
+            <Lightbulb size={13} /> {b.title || "Nhận định khi triển khai"} · kinh nghiệm, không phải số liệu Kalodata
+          </p>
+          <ul className="space-y-1.5">{items}</ul>
+        </div>,
       );
     } else if (b.type === "closing")
       out.push(

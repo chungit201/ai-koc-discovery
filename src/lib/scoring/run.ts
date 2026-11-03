@@ -5,7 +5,7 @@ import { C } from "../db/collections";
 import { DEFAULT_CRITERIA, type Criteria } from "../brief";
 import type { BriefPlan } from "../plan";
 import { compact, pct, vnd } from "../format";
-import { SCORING_VERSION, clamp01, estimateCost, focusPattern, percentileOf, weightsFor, type ScoreKey } from "./rules";
+import { BREAKOUT_FACTOR, SCORING_VERSION, breakoutRate, clamp01, estimateCost, focusPattern, growthLabel, growthScore, percentileOf, weightsFor, type ScoreKey } from "./rules";
 
 /**
  * S2 — hard filters + quantitative scoring + evidence for one campaign. Pure code, 0 tokens.
@@ -36,6 +36,8 @@ interface Creator {
   followers?: number;
   mcn?: string | null;
   bio?: string | null;
+  /** Cờ của Kalodata: `BELONGED_TO_SELLER` = kênh do nhà bán tự vận hành, không phải KOC đi hợp tác. */
+  status?: string | null;
   audience?: { gender_majority?: string | null; age_majority?: string | null; age_buckets_matched?: string[] };
 }
 
@@ -90,6 +92,8 @@ export async function scoreCampaign(campaignId: string) {
     const reasons: string[] = [];
     const followers = c.followers ?? 0;
     if (!detailed.has(id)) reasons.push("no_detail");
+    // Kênh của chính nhà bán: doanh thu rất cao nhưng không phải đối tượng đi hợp tác quảng bá
+    if (c.status === "BELONGED_TO_SELLER") reasons.push("seller_account");
     if (crit.followers_min !== null && followers < crit.followers_min) reasons.push("followers_low");
     if (crit.followers_max !== null && followers > crit.followers_max) reasons.push("followers_high");
     if (crit.audience_gender && c.audience?.gender_majority && c.audience.gender_majority !== crit.audience_gender) reasons.push("gender");
@@ -106,6 +110,12 @@ export async function scoreCampaign(campaignId: string) {
   const pRev = percentileOf(eligible.map((r) => r.list.revenue ?? 0));
   const pViews = percentileOf(eligible.map((r) => r.list.views ?? 0));
   const pEng = percentileOf(eligible.map((r) => r.list.video_engagement_rate ?? 0));
+  // Tăng trưởng doanh thu so với kỳ trước — có sẵn trên 100% doc `creator/queryList`, trước nay
+  // crawl về rồi bỏ không dùng. Trung vị của pool đang âm, nên đây là yếu tố phân loại thật.
+  const growthOf = (r: Row): number | null => (typeof r.list.revenue_growth_rate === "number" ? r.list.revenue_growth_rate : null);
+  const pGrowth = percentileOf(eligible.map((r) => growthOf(r) ?? 0));
+  const breakoutOf = (id: string) => breakoutRate((videosBy.get(id) ?? []).map((v) => v.views ?? 0));
+  const pBreak = percentileOf(eligible.map((r) => breakoutOf(String(r.c._id))?.rate ?? 0));
   // Absolute revenue from campaign-focus products, ranked inside the eligible pool
   const focusRevenueOf = (id: string) => (productsBy.get(id) ?? []).filter((p) => focus.test(p.name ?? "")).reduce((a, p) => a + (p.revenue ?? 0), 0);
   const pFocusRev = percentileOf(eligible.map((r) => focusRevenueOf(String(r.c._id))));
@@ -142,17 +152,42 @@ export async function scoreCampaign(campaignId: string) {
       }),
     );
 
-    // engagement
-    const engagement = pEng(r.list.video_engagement_rate ?? 0);
+    // growth — xu hướng doanh thu so với kỳ trước
+    const rate = growthOf(r);
+    const growth = growthScore(pGrowth(rate ?? 0), rate);
+    if (rate !== null)
+      ids.push(
+        ev("growth", {
+          type: "metric",
+          claim: `Doanh thu ${growthLabel(rate)}: ${rate >= 0 ? "+" : ""}${pct(rate, 1)} so với kỳ trước (cao hơn ${Math.round(pGrowth(rate) * 100)}% KOC đủ điều kiện)`,
+          value: rate,
+          source: { collection: C.creatorMetrics, ref: String(r.list._id) },
+          strength: rate >= 0.3 ? "strong" : rate > -0.05 ? "medium" : "weak",
+        }),
+      );
+
+    // engagement: đều tay (tỷ lệ tương tác) + khả năng bùng nổ (tỉ lệ video vượt 3× trung vị kênh)
+    const brk = breakoutOf(id);
+    const engagement = clamp01(0.7 * pEng(r.list.video_engagement_rate ?? 0) + 0.3 * pBreak(brk?.rate ?? 0));
     ids.push(
       ev("engagement", {
         type: "metric",
-        claim: `Tỷ lệ tương tác video ${pct(r.list.video_engagement_rate)} (cao hơn ${Math.round(engagement * 100)}% KOC đủ điều kiện)`,
+        claim: `Tỷ lệ tương tác video ${pct(r.list.video_engagement_rate)} (cao hơn ${Math.round(pEng(r.list.video_engagement_rate ?? 0) * 100)}% KOC đủ điều kiện)`,
         value: r.list.video_engagement_rate ?? null,
         source: { collection: C.creatorMetrics, ref: String(r.list._id) },
-        strength: engagement >= 0.7 ? "strong" : engagement >= 0.4 ? "medium" : "weak",
+        strength: pEng(r.list.video_engagement_rate ?? 0) >= 0.7 ? "strong" : pEng(r.list.video_engagement_rate ?? 0) >= 0.4 ? "medium" : "weak",
       }),
     );
+    if (brk)
+      ids.push(
+        ev("breakout", {
+          type: "metric",
+          claim: `${brk.hits}/${brk.total} video vượt ${BREAKOUT_FACTOR}× lượt xem trung vị của kênh (${pct(brk.rate, 0)} video nổi bật; trung vị ${compact(brk.median)} view)`,
+          value: brk.rate,
+          source: { collection: C.videos, ref: id },
+          strength: brk.rate >= 0.15 ? "strong" : brk.rate > 0 ? "medium" : "weak",
+        }),
+      );
 
     // consistency (exact per-day values)
     const dayRev = daily.map((d) => d.revenue ?? 0);
@@ -250,7 +285,7 @@ export async function scoreCampaign(campaignId: string) {
       }),
     );
 
-    const scores: Record<ScoreKey, number> = { performance, content_fit, engagement, cost_fit, consistency, audience_fit };
+    const scores: Record<ScoreKey, number> = { performance, content_fit, engagement, growth, cost_fit, consistency, audience_fit };
     const total = (Object.keys(weights) as ScoreKey[]).reduce((a, k) => a + weights[k] * scores[k], 0);
     scoreDocs.push({
       campaign_id: campaignId,
@@ -259,6 +294,8 @@ export async function scoreCampaign(campaignId: string) {
       scores: Object.fromEntries(Object.entries(scores).map(([k, v]) => [k, Math.round(v * 1000) / 10])),
       total: Math.round(total * 1000) / 10,
       revenue: r.list.revenue ?? 0, // dùng khi người dùng muốn xếp theo doanh thu
+      growth_rate: rate, // tỉ lệ thô (0,847 = +84,7%) — agent và giao diện đọc thẳng
+      breakout_rate: brk?.rate ?? null,
       cost_estimate: r.cost,
       evidence_ids: ids,
       focus_counts: { products: focusProds.length, videos: focusVideos.length },

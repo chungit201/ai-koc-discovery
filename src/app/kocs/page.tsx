@@ -3,11 +3,12 @@ import Link from "next/link";
 import { Avatar } from "@/components/avatar";
 import { Sparkline } from "@/components/charts/sparkline";
 import { FilterSelect } from "@/components/filter-select";
+import { FilterDrawer } from "@/components/filter-drawer";
 import { DeepSearchButton } from "@/components/deep-search-button";
 import { KocActions } from "@/components/koc-actions";
 import { ScrollShadows } from "@/components/scroll-shadows";
-import { Delta, KpiCard, Pill, ShareBar } from "@/components/kit";
-import { CATEGORY_NAMES, PAGE_SIZE, kocSummary, searchKocs, type KocFilters, type KocRow } from "@/lib/data/queries";
+import { Delta, Pill, ShareBar } from "@/components/kit";
+import { CATEGORY_NAMES, PAGE_SIZE, searchKocs, type KocFilters, type KocRow } from "@/lib/data/queries";
 import { compact, pct, vnd } from "@/lib/format";
 
 type SP = Record<string, string | string[] | undefined>;
@@ -63,6 +64,15 @@ const PIN_CREATOR = [
   "after:opacity-0 after:transition-opacity group-data-[left=true]/scroll:after:opacity-100",
 ].join(" ");
 
+/**
+ * Hai kiểu xem. "Bảng" = bảng đầy đủ trên desktop, và danh sách dòng gọn trên mobile (cùng dữ liệu,
+ * bảng 13 cột không đọc nổi ở khổ hẹp). "Thẻ" = lưới thẻ ở mọi khổ.
+ */
+const VIEWS = [
+  { v: "table", label: "Bảng", Icon: TableProperties },
+  { v: "card", label: "Thẻ", Icon: LayoutGrid },
+] as const;
+
 const SORTS = [
   { value: "revenue", label: "Doanh thu" },
   { value: "engagement", label: "Tương tác" },
@@ -86,10 +96,10 @@ export default async function KocsPage({ searchParams }: { searchParams: Promise
     page: Number(one(sp.page) ?? 1),
   };
   const view: "table" | "card" = one(sp.view) === "card" ? "card" : "table";
-  const [{ rows, total, scope }, summary] = await Promise.all([searchKocs(filters), kocSummary(filters.run)]);
+  const { rows, total, scope } = await searchKocs(filters);
+  const maxRevenue = Math.max(1, ...rows.map((r) => r.revenue ?? 0));
   const page = filters.page ?? 1;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const maxRevenue = Math.max(1, ...rows.map((r) => r.revenue ?? 0));
   const qs = (patch: Record<string, string | number | undefined>) => {
     const p = new URLSearchParams();
     for (const [k, v] of Object.entries({ ...sp, ...patch })) if (v !== undefined && v !== "") p.set(k, String(Array.isArray(v) ? v[0] : v));
@@ -98,7 +108,7 @@ export default async function KocsPage({ searchParams }: { searchParams: Promise
   const sortLabel = SORTS.find((s) => s.value === filters.sort)?.label.toLowerCase() ?? "doanh thu";
 
   return (
-    <main className="mx-auto w-full max-w-[1760px] space-y-6 px-8 py-8 xl:px-10">
+    <main className="mx-auto w-full max-w-[1760px] space-y-5 px-4 py-5 sm:space-y-6 sm:px-6 sm:py-6 lg:px-8 lg:py-8 xl:px-10">
       {/* ── Header: title left, primary CTA top-right ── */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -107,85 +117,111 @@ export default async function KocsPage({ searchParams }: { searchParams: Promise
             {scope ? `${CATEGORY_NAMES[scope.category_id] ?? scope.category_id} · dữ liệu 30 ngày gần nhất` : "Chưa có dữ liệu"}
           </p>
         </div>
-        <DeepSearchButton variant="header" />
+        {/* Dưới lg thanh điều hướng trên cùng đã có nút này — không hiện trùng */}
+        <div className="hidden lg:block">
+          <DeepSearchButton variant="header" />
+        </div>
       </div>
 
-      {/* ── Toolbar: search + filters left, sort + view right ── */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2.5">
-            <form method="get" className="flex h-10 w-64 items-center gap-2 rounded-xl border border-line bg-white px-3 focus-within:border-brand">
-              {Object.entries(sp)
-                .filter(([k]) => k !== "q" && k !== "page")
-                .map(([k, v]) => (
-                  <input key={k} type="hidden" name={k} value={one(v)} />
-                ))}
-              <Search size={16} className="text-ink-muted" />
-              <input name="q" defaultValue={filters.q} placeholder="Tìm nhà sáng tạo…" className="h-full flex-1 bg-transparent text-[13px] outline-none" />
-            </form>
+      {/* ── Toolbar ──
+          Mobile: ô tìm kiếm chiếm hết hàng, nút Bộ lọc (gồm cả sắp xếp) và nút chuyển kiểu xem
+          đứng cạnh dưới dạng icon. Desktop: các select lọc + hàng nút sắp xếp hiện thẳng ra. */}
+      <div className="space-y-2.5 lg:flex lg:flex-wrap lg:items-center lg:justify-between lg:gap-3 lg:space-y-0">
+        <div className="flex items-center gap-2 lg:flex-wrap lg:gap-2.5">
+          <form method="get" className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-xl border border-line bg-white px-3 focus-within:border-brand lg:w-64 lg:flex-none">
+            {Object.entries(sp)
+              .filter(([k]) => k !== "q" && k !== "page")
+              .map(([k, v]) => (
+                <input key={k} type="hidden" name={k} value={one(v)} />
+              ))}
+            <Search size={16} className="text-ink-muted" />
+            <input name="q" defaultValue={filters.q} placeholder="Tìm nhà sáng tạo…" className="h-full flex-1 bg-transparent text-[13px] outline-none" />
+          </form>
+
+          <FilterDrawer className="lg:hidden" groups={FILTERS} sorts={{ name: "sort", label: "Doanh thu", options: SORTS }} />
+
+          <div className="hidden lg:contents">
             {FILTERS.map((f) => (
               <FilterSelect key={f.name} name={f.name} label={f.label} options={f.options} />
             ))}
+          </div>
+
+          {/* Nút chuyển kiểu xem: mobile chỉ icon cho vừa hàng, desktop kèm chữ */}
+          <div className="flex shrink-0 items-center rounded-xl bg-zinc-100 p-1 lg:hidden" role="group" aria-label="Kiểu hiển thị">
+            {VIEWS.map(({ v, label, Icon }) => (
+              <Link
+                key={v}
+                href={qs({ view: v === "table" ? undefined : v })}
+                aria-pressed={view === v}
+                title={`Xem dạng ${label.toLowerCase()}`}
+                className={`grid h-8 w-9 place-items-center rounded-lg ${view === v ? "bg-white shadow-sm" : "text-zinc-500"}`}
+              >
+                <Icon size={16} />
+              </Link>
+            ))}
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2.5">
-            <div className="flex items-center rounded-xl bg-zinc-100 p-1">
-              {SORTS.map((s) => (
-                <Link
-                  key={s.value}
-                  href={qs({ sort: s.value, page: undefined })}
-                  className={`rounded-lg px-3 py-1.5 text-[13px] ${filters.sort === s.value ? "bg-white font-semibold shadow-sm" : "text-zinc-600 hover:text-ink"}`}
-                >
-                  {s.label}
-                </Link>
-              ))}
-            </div>
-            <div className="flex items-center rounded-xl bg-zinc-100 p-1" role="group" aria-label="Kiểu hiển thị">
-              {(
-                [
-                  { v: "table", label: "Bảng", Icon: TableProperties },
-                  { v: "card", label: "Thẻ", Icon: LayoutGrid },
-                ] as const
-              ).map(({ v, label, Icon }) => (
-                <Link
-                  key={v}
-                  href={qs({ view: v === "table" ? undefined : v })}
-                  aria-pressed={view === v}
-                  title={`Xem dạng ${label.toLowerCase()}`}
-                  className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] ${view === v ? "bg-white font-semibold shadow-sm" : "text-zinc-600 hover:text-ink"}`}
-                >
-                  <Icon size={15} /> {label}
-                </Link>
-              ))}
-            </div>
+
+        <div className="hidden flex-wrap items-center gap-2.5 lg:flex">
+          <div className="flex items-center rounded-xl bg-zinc-100 p-1">
+            {SORTS.map((s) => (
+              <Link
+                key={s.value}
+                href={qs({ sort: s.value, page: undefined })}
+                className={`rounded-lg px-3 py-1.5 text-[13px] ${filters.sort === s.value ? "bg-white font-semibold shadow-sm" : "text-zinc-600 hover:text-ink"}`}
+              >
+                {s.label}
+              </Link>
+            ))}
+          </div>
+          <div className="flex items-center rounded-xl bg-zinc-100 p-1" role="group" aria-label="Kiểu hiển thị">
+            {VIEWS.map(({ v, label, Icon }) => (
+              <Link
+                key={v}
+                href={qs({ view: v === "table" ? undefined : v })}
+                aria-pressed={view === v}
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] ${view === v ? "bg-white font-semibold shadow-sm" : "text-zinc-600 hover:text-ink"}`}
+              >
+                <Icon size={15} /> {label}
+              </Link>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* ── KPI row ── */}
-      {summary && (
-        <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
-          <KpiCard label="Nhà sáng tạo" value={summary.kocs.toLocaleString("vi-VN")} />
-          <KpiCard label="Tổng doanh thu mỹ phẩm" value={vnd(summary.revenue)} />
-          <KpiCard label="Tổng đơn bán ra" value={compact(summary.sales)} />
-          <KpiCard label="Tương tác trung vị" value={pct(summary.medianEngagement)} />
-        </div>
-      )}
-
       {/* ── Leaderboard ── */}
       <section className="card overflow-hidden">
-        <div className="flex items-center justify-between px-6 pb-3 pt-5">
+        {/* Màn hẹp: tiêu đề và dòng chú thích xuống dòng thay vì chen nhau mỗi bên một nửa */}
+        <div className="flex flex-col gap-0.5 px-4 pb-3 pt-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <h2 className="text-[17px] font-semibold">Bảng xếp hạng nhà sáng tạo</h2>
           <span className="text-[13px] text-ink-muted">
             {total.toLocaleString("vi-VN")} KOC · xếp theo {sortLabel}
           </span>
         </div>
+        {/**
+         * Hai cách xem, cùng một dữ liệu:
+         *  - "Bảng" = DANH SÁCH DÒNG (không còn bảng 13 cột rộng 1360px). Bảng cũ buộc cuộn ngang,
+         *    trên điện thoại chỉ thấy hạng và tên còn mọi số liệu nằm ngoài màn hình.
+         *  - "Thẻ" = lưới thẻ đầy đủ, có biểu đồ xu hướng và nút thao tác.
+         */}
         {view === "card" ? (
-          <div className="grid gap-4 px-6 pb-6 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 px-4 pb-6 sm:grid-cols-2 sm:px-6 xl:grid-cols-3 2xl:grid-cols-4">
             {rows.map((r, i) => (
               <KocCard key={r.id} r={r} rank={(page - 1) * PAGE_SIZE + i + 1} />
             ))}
             {!rows.length && <p className="col-span-full py-16 text-center text-ink-muted">Không có nhà sáng tạo phù hợp bộ lọc.</p>}
           </div>
         ) : (
-        <ScrollShadows>
+          <>
+            {/* Mobile: danh sách dòng gọn. Bảng đầy đủ chỉ hiện từ lg — ở khổ hẹp nó buộc cuộn
+                ngang và toàn bộ cột số liệu nằm ngoài màn hình. */}
+            <div className="divide-y divide-line lg:hidden">
+              {rows.map((r, i) => (
+                <KocRow key={r.id} r={r} rank={(page - 1) * PAGE_SIZE + i + 1} />
+              ))}
+              {!rows.length && <p className="py-16 text-center text-ink-muted">Không có nhà sáng tạo phù hợp bộ lọc.</p>}
+            </div>
+            <ScrollShadows className="hidden lg:block">
           {/* Wide table scrolls inside the card; header labels never wrap */}
           <table className="w-full min-w-[1360px]">
             <thead className="whitespace-nowrap text-left text-[12px] text-ink-muted">
@@ -264,8 +300,9 @@ export default async function KocsPage({ searchParams }: { searchParams: Promise
             </tbody>
           </table>
         </ScrollShadows>
+          </>
         )}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-6 py-4 text-[13px]">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-4 py-4 text-[13px] sm:px-6">
           <span className="text-ink-muted">Khán giả = nhóm người theo dõi chiếm đa số</span>
           <div className="flex items-center gap-1.5">
             <PageLink href={qs({ page: page - 1 })} disabled={page <= 1}>
@@ -288,6 +325,42 @@ function PageLink({ href, disabled, children }: { href: string; disabled: boolea
   return (
     <Link href={href} className="rounded-lg border border-line bg-white px-3 py-1.5 font-medium hover:border-brand hover:text-brand">
       {children}
+    </Link>
+  );
+}
+
+/**
+ * Một dòng trong danh sách KOC trên **mobile** (chế độ Bảng). Gọn hơn hẳn `KocCard`: ảnh tròn,
+ * @handle là dòng chính, tên hiển thị là dòng phụ, rồi đúng hai số liệu quan trọng nhất theo cột.
+ * Bỏ biểu đồ xu hướng và nút thao tác — trên màn hẹp chúng chiếm chỗ mà hiếm khi được dùng;
+ * cả hai vẫn có đủ ở trang chi tiết (bấm vào dòng là tới).
+ */
+function KocRow({ r, rank }: { r: KocRow; rank: number }) {
+  const top = rank <= 3;
+  return (
+    <Link href={`/kocs/${r.id}`} className="flex gap-3 px-4 py-3.5 transition active:bg-zinc-50">
+      <span
+        className={`num mt-1 grid h-5 min-w-5 shrink-0 place-items-center rounded-md px-1 text-[11px] font-bold ${
+          top ? "bg-brand-soft text-brand-strong" : "bg-zinc-100 text-zinc-600"
+        }`}
+      >
+        {rank}
+      </span>
+      <Avatar id={r.id} name={r.handle} size={52} round />
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[14px] font-semibold">{r.handle}</div>
+        <div className="truncate text-[12.5px] text-ink-muted">{r.nickname || r.handle}</div>
+        <div className="mt-2.5 grid grid-cols-2 gap-2">
+          <div className="min-w-0">
+            <div className="num truncate text-[15px] font-bold text-brand">{vnd(r.revenue)}</div>
+            <div className="text-[11.5px] text-ink-muted">Doanh thu</div>
+          </div>
+          <div className="min-w-0">
+            <div className="num truncate text-[15px] font-bold">{compact(r.followers)}</div>
+            <div className="text-[11.5px] text-ink-muted">Người theo dõi</div>
+          </div>
+        </div>
+      </div>
     </Link>
   );
 }

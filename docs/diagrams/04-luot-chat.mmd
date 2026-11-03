@@ -1,0 +1,35 @@
+flowchart TD
+    S["text của người bán"] --> CTX["① NGỮ CẢNH<br/>campaignState + roster + 8 lượt gần nhất"]
+    CTX --> LLM["② PHÂN LOẠI — Haiku chat-v4"]
+    LLM --> OUT["intent · criteria · creator_ids · reply"]
+
+    OUT --> V{"③ hỏi về giọng nói / âm thanh?"}
+    V -->|có| VX["out_of_scope — trả lời thẳng là không có dữ liệu<br/>DỪNG"]
+
+    V -->|không| CR{"④ criteria KHÁC giá trị hiện tại?"}
+    CR -->|"có — ở MỌI intent"| CR1["lưu criteria + bản sao phẳng<br/>có ngân sách → thêm bước recommend<br/>from = score_fit (ghi đè mọi from khác)"]
+    CR -->|"không, mà intent = refine_criteria"| CR2["from = null<br/>hỏi lại con số"]
+    CR -->|không| INT
+
+    CR1 --> INT{"⑤ rẽ theo intent"}
+    CR2 --> INT
+
+    INT -->|"explain / web_info"| AG["AGENT trả lời<br/>đọc trạng thái HIỆN TẠI"]
+    INT -->|exclude_koc| EX["excluded_creator_ids<br/>from = recommend"]
+    INT -->|deepen| DP["1 KOC mỗi lượt<br/>from = analyse_videos"]
+    INT -->|out_of_scope| NO["from = null"]
+
+    AG --> RR
+    EX --> RR
+    DP --> RR
+    NO --> RR
+
+    RR{"⑥ from ≠ null?"}
+    RR -->|có| RR1["xoá summary từ from trở đi<br/>scoring / s3 / s4 / s5<br/>pipeline.stage = queued"]
+    RR -->|không| UP
+    RR1 --> UP["⑦ updateOne — MỘT lần duy nhất<br/>SAU khi agent đã trả lời"]
+    UP --> RET["⑧ reply · blocks · steps · reruns"]
+    RET --> RUN["reruns ≠ [] → runPipeline(force)"]
+
+    classDef moi fill:#fef3c7,stroke:#d97706,stroke-width:2px
+    class CR,CR1,AG moi

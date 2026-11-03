@@ -6,7 +6,7 @@ import { compact, vnd } from "@/lib/format";
 const FMT = { vnd, number: compact } as const;
 export type ValueFormat = keyof typeof FMT;
 
-const ACCENT = "#167045"; // = --color-brand, validated for chroma + contrast
+const ACCENT = "#5b63d3"; // = --color-brand, đã qua validator chroma + tương phản
 
 /**
  * Single-series time chart: 2px line + faint same-hue area, recessive grid (3 ticks),

@@ -126,8 +126,6 @@ export function criteriaRows(c: Criteria, s: CriteriaSources): { label: string; 
     .join(" · ");
   const src = (key: keyof Criteria) => s[key] ?? "default";
   return [
-    { label: "Nền tảng", value: c.platform, source: "fixed" },
-    { label: "Quốc gia", value: c.country, source: "fixed" },
     { label: "Danh mục", value: CAMPAIGN_CATEGORIES.find((x) => x.id === c.category_id)?.name ?? c.category_id, source: src("category_id") },
     ...(c.product_focus ? [{ label: "Sản phẩm", value: c.product_focus, source: src("product_focus") }] : []),
     { label: "Follower", value: followers, source: src("followers_min") === "default" ? src("followers_max") : src("followers_min") },

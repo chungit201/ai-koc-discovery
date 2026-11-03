@@ -16,7 +16,7 @@ const PROGRESS = {
 export default async function CampaignsPage() {
   const campaigns = await listCampaigns();
   return (
-    <main className="mx-auto w-full max-w-[1440px] space-y-6 px-8 py-8 xl:px-10">
+    <main className="mx-auto w-full max-w-[1440px] space-y-5 px-4 py-5 sm:space-y-6 sm:px-6 sm:py-6 lg:px-8 lg:py-8 xl:px-10">
       {/* có chiến dịch đang chạy → tự làm mới để nhãn tiến độ không bị đứng */}
       {campaigns.some((c) => c.progress === "running") && <AutoRefresh seconds={6} />}
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -24,7 +24,10 @@ export default async function CampaignsPage() {
           <h1 className="text-[26px] font-bold tracking-tight">Chiến dịch</h1>
           <p className="mt-1 text-[14px] text-ink-muted">Mỗi chiến dịch: danh mục, ngân sách và số KOC — hệ thống đề xuất KOC kèm bằng chứng</p>
         </div>
-        <DeepSearchButton variant="header" />
+        {/* Dưới lg thanh điều hướng trên cùng đã có nút này — không hiện trùng */}
+        <div className="hidden lg:block">
+          <DeepSearchButton variant="header" />
+        </div>
       </div>
 
       <section className="card divide-y divide-line">

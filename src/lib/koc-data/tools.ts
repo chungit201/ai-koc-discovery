@@ -6,6 +6,7 @@ import { compact, pct, vnd } from "../format";
 import { analyseVideo } from "../pipeline/s4-video";
 import { topBrand } from "../evidence/creator";
 import { categoryBreakdown, channelTotals, denominator, productFacts, UNCATEGORISED, type CategoryLevel } from "./facts";
+import { EXCLUDE_LABELS } from "../scoring/rules";
 
 /**
  * Bộ công cụ cho agent hỏi đáp về KOC (docs/10-koc-agent.md, P2). Mỗi hàm **chỉ đọc DB**, trả
@@ -480,6 +481,7 @@ const SCORE_LABEL: Record<string, string> = {
   performance: "hiệu suất",
   content_fit: "hợp sản phẩm",
   engagement: "tương tác",
+  growth: "tăng trưởng",
   cost_fit: "hợp ngân sách",
   consistency: "ổn định",
   audience_fit: "hợp khán giả",
@@ -491,8 +493,28 @@ const SCORE_LABEL: Record<string, string> = {
  * — đủ để trả lời "vì sao chọn A mà không chọn B". Điểm/ngân sách là kết quả pipeline, agent không
  * được tính lại hay sửa.
  */
-async function campaignContext({ campaignId }: ToolCtx): Promise<Out> {
-  if (!campaignId) throw new Error("Công cụ này chỉ dùng trong chat chiến dịch");
+interface CampaignRow extends Record<string, unknown> {
+  rank: number;
+  creator_id: string;
+  name: string;
+  handle: string;
+  followers: number;
+  picked: boolean;
+  budget: number;
+  total: number;
+  scores: Record<string, number>;
+  revenue: number;
+  /** Tỉ lệ thô so với kỳ trước (0,847 = +84,7%); null nếu chiến dịch chấm bằng bản scoring trước s2-v5. */
+  growth_rate: number | null;
+  breakout_rate: number | null;
+  cost_min: number;
+  cost_max: number;
+  evidence: string[];
+}
+
+/** Shortlist của chiến dịch kèm điểm, chi phí ước tính và bằng chứng — dùng chung cho `campaign_context` và `allocate_budget`. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function campaignRows(campaignId: string): Promise<{ camp: Record<string, any>; rows: CampaignRow[]; picks: { creator_id: string; budget?: number }[] }> {
   const db = await getDb();
   const camp = await db.collection(C.campaigns).findOne({ _id: campaignId as never });
   if (!camp) throw new Error("Không tìm thấy chiến dịch");
@@ -506,7 +528,7 @@ async function campaignContext({ campaignId }: ToolCtx): Promise<Out> {
   const evIds = scores.flatMap((s) => (s.evidence_ids as string[]) ?? []);
   const claims = new Map((await db.collection(C.evidence).find({ _id: { $in: evIds as never[] } }, { projection: { claim: 1 } }).toArray()).map((e) => [String(e._id), String(e.claim)]));
 
-  const rows = scores.map((s) => {
+  const rows: CampaignRow[] = scores.map((s) => {
     const id = String(s.creator_id);
     const c = creators.get(id);
     const total = num(s.s4_total ?? s.s3_total ?? s.total);
@@ -514,20 +536,40 @@ async function campaignContext({ campaignId }: ToolCtx): Promise<Out> {
       rank: num(s.s4_rank ?? s.s3_rank ?? s.rank),
       creator_id: id,
       name: String(c?.nickname || c?.handle || id),
-      handle: String(c?.handle ?? ""),
+      // `creators.handle` lưu kèm "@" — bỏ đi để mọi chỗ ghép được thành tiktok.com/@<handle>
+      handle: String(c?.handle ?? "").replace(/^@/, ""),
       followers: num(c?.followers),
       picked: budgetOf.has(id),
       budget: budgetOf.get(id) ?? 0,
       total: Math.round(total * 10) / 10,
       scores: (s.scores as Record<string, number>) ?? {},
       revenue: num(s.revenue),
+      // Tỉ lệ thô so với kỳ trước (0,847 = +84,7%); null khi chiến dịch chấm bằng bản scoring cũ
+      growth_rate: typeof s.growth_rate === "number" ? s.growth_rate : null,
+      breakout_rate: typeof s.breakout_rate === "number" ? s.breakout_rate : null,
       cost_min: num((s.cost_estimate as { min?: number })?.min),
       cost_max: num((s.cost_estimate as { max?: number })?.max),
       evidence: ((s.evidence_ids as string[]) ?? []).map((e) => claims.get(e)).filter(Boolean) as string[],
     };
   });
   rows.sort((a, b) => Number(b.picked) - Number(a.picked) || a.rank - b.rank);
+  return { camp, rows, picks };
+}
+
+async function campaignContext({ campaignId }: ToolCtx): Promise<Out> {
+  if (!campaignId) throw new Error("Công cụ này chỉ dùng trong chat chiến dịch");
+  const { camp, rows, picks } = await campaignRows(campaignId);
+  // Ai bị loại và vì sao — người bán cần biết mình không bỏ sót ai. Con số này nằm sẵn trong
+  // `campaigns.scoring` từ lâu nhưng chưa bao giờ được đưa ra cho agent nói.
+  const byReason = (camp.scoring?.excluded_by_reason ?? {}) as Record<string, number>;
+  const excludedText = Object.entries(byReason)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `${v} người ${EXCLUDE_LABELS[k] ?? k}`)
+    .join(", ");
+
   const numbers: Record<string, number> = { shortlisted: rows.length, picked: picks.length };
+  for (const [k, v] of Object.entries(byReason)) numbers[`excluded_${k}`] = v;
+  if (num(camp.scoring?.excluded)) numbers.excluded_total = num(camp.scoring?.excluded);
   const crit = (camp.criteria ?? {}) as Record<string, unknown>;
   if (num(crit.budget_total)) numbers.budget_total = num(crit.budget_total);
   if (num(camp.s5?.allocated)) numbers.allocated = num(camp.s5?.allocated);
@@ -536,6 +578,8 @@ async function campaignContext({ campaignId }: ToolCtx): Promise<Out> {
     numbers[`k${i + 1}_total`] = r.total;
     numbers[`k${i + 1}_followers`] = r.followers;
     numbers[`k${i + 1}_revenue`] = r.revenue;
+    if (r.growth_rate !== null) numbers[`k${i + 1}_growth_rate`] = r.growth_rate;
+    if (r.breakout_rate !== null) numbers[`k${i + 1}_breakout_rate`] = r.breakout_rate;
     if (r.budget) numbers[`k${i + 1}_budget`] = r.budget;
     for (const [k, v] of Object.entries(r.scores)) numbers[`k${i + 1}_${k}`] = num(v);
   });
@@ -548,20 +592,124 @@ async function campaignContext({ campaignId }: ToolCtx): Promise<Out> {
     summary:
       `Chiến dịch ${String(camp.category_name ?? "")}${camp.prompt ? ` — yêu cầu gốc: '${String(camp.prompt).slice(0, 160)}'` : ""}. Tiêu chí: ${critText || "chưa đặt"}. ` +
       (camp.scoring ? `Đã lọc ${camp.scoring.pool} KOC → ${camp.scoring.eligible} đạt tiêu chí. ` : "") +
+      (excludedText ? `Đã LOẠI ${camp.scoring.excluded} KOC: ${excludedText}. ` : "") +
+      `Mọi KOC trong danh sách dưới đây đều được Kalodata đánh dấu là nhà sáng tạo ĐỘC LẬP (tài khoản do chính nhà bán vận hành đã bị loại). ` +
       (camp.s5 ? `Đã chọn ${picks.length} KOC, chia ${vnd(num(camp.s5.allocated))}. ` : "Chưa chọn KOC/chia ngân sách. ") +
       `Điểm phù hợp 0-100 do code chấm (trọng số theo tiêu chí), KHÔNG được tính lại. ` +
       rows
         .map(
           (r, i) =>
-            `#${i + 1} ${r.name} (id ${r.creator_id}, ${r.picked ? `ĐƯỢC CHỌN, ngân sách ${vnd(r.budget)}` : "dự phòng"}): điểm ${r.total}; ${Object.entries(r.scores)
+            `#${i + 1} ${r.name} (id ${r.creator_id}${r.handle ? `, handle @${r.handle}` : ""}, ${r.picked ? `ĐƯỢC CHỌN, ngân sách ${vnd(r.budget)}` : "dự phòng"}): điểm ${r.total}; ${Object.entries(r.scores)
               .map(([k, v]) => `${SCORE_LABEL[k] ?? k} ${v}`)
-              .join(", ")}; ${compact(r.followers)} follower; chi phí ước tính ${vnd(r.cost_min)}–${vnd(r.cost_max)}/video. Bằng chứng: ${r.evidence.join(" | ")}`,
+              .join(", ")}; ${compact(r.followers)} follower; ${
+              r.growth_rate === null ? "chưa có số tăng trưởng" : `doanh thu ${r.growth_rate >= 0 ? "+" : ""}${p1(r.growth_rate)} so với kỳ trước`
+            }; chi phí ước tính ${vnd(r.cost_min)}–${vnd(r.cost_max)}/video. Bằng chứng: ${r.evidence.join(" | ")}`,
         )
         .join(" || "),
     rows,
     numbers,
     source: { collection: C.campaigns, ref: campaignId },
   };
+}
+
+// ── allocate_budget ───────────────────────────────────────────────────────────
+/**
+ * Phương án chia một khoản ngân sách cho các KOC trong chiến dịch — **code tính, agent chỉ giải
+ * thích**, đúng nguyên tắc "con số thuộc về code" của S5. Khác S5 ở chỗ đây là phương án *tham khảo*
+ * ngay trong lúc chat (chiến dịch có thể chưa có ngân sách, chưa chạy bước đề xuất), nên nó không
+ * ghi gì vào chiến dịch.
+ *
+ * Cách chia: tỉ lệ thuận với `basis` (điểm phù hợp / doanh thu mỹ phẩm 30 ngày / chi phí ước tính),
+ * làm tròn tới 100k, phần dư dồn vào KOC đầu bảng để tổng khớp tuyệt đối. Sau đó mỗi dòng được đối
+ * chiếu với **chi phí ước tính/video** của chính KOC đó: phần ngân sách không đủ cho 1 video được
+ * đánh dấu `đủ 0 video` — đây là điều bảng phân bổ chia theo tỉ trọng suông không nói được.
+ */
+const BASIS_LABEL: Record<string, string> = { fit: "điểm phù hợp", revenue: "doanh thu mỹ phẩm 30 ngày", cost: "chi phí ước tính" };
+
+async function allocateBudget({ campaignId }: ToolCtx, args: Args): Promise<Out> {
+  if (!campaignId) throw new Error("Công cụ này chỉ dùng trong chat chiến dịch");
+  const total = Number(args.total);
+  if (!Number.isFinite(total) || total <= 0) throw new Error("total phải là tổng ngân sách VND > 0 (lấy đúng con số người bán vừa nói)");
+  const basis = ["fit", "revenue", "cost"].includes(String(args.basis)) ? String(args.basis) : "fit";
+
+  const { camp, rows: all } = await campaignRows(campaignId);
+  const wanted = Array.isArray(args.creator_ids) ? args.creator_ids.map(String) : [];
+  const byId = new Map(all.map((r) => [r.creator_id, r]));
+  const bad = wanted.filter((id) => !byId.has(id));
+  if (bad.length) throw new Error(`creator_id ${bad.join(", ")} không có trong shortlist — lấy id từ campaign_context`);
+  const n = int(args.koc_count, num(camp.koc_count) || 5, 15);
+  const rows = wanted.length ? wanted.map((id) => byId.get(id)!) : all.slice(0, n);
+  if (!rows.length) throw new Error("Chiến dịch chưa có KOC nào trong shortlist");
+
+  const weightOf = (r: CampaignRow) => (basis === "revenue" ? r.revenue : basis === "cost" ? (r.cost_min + r.cost_max) / 2 : r.total);
+  const sum = rows.reduce((a, r) => a + Math.max(0, weightOf(r)), 0);
+  // Không có căn cứ nào khác 0 (vd chọn basis=revenue mà cả nhóm chưa có doanh thu) → chia đều
+  const even = sum <= 0;
+  const STEP = 100_000;
+  const raw = rows.map((r) => (even ? total / rows.length : (total * Math.max(0, weightOf(r))) / sum));
+  const budgets = raw.map((v) => Math.round(v / STEP) * STEP);
+  budgets[0] += total - budgets.reduce((a, b) => a + b, 0); // dồn phần dư làm tròn vào KOC đầu bảng
+
+  const out = rows.map((r, i) => {
+    const budget = budgets[i];
+    const mid = (r.cost_min + r.cost_max) / 2;
+    return {
+      rank: i + 1,
+      creator_id: r.creator_id,
+      name: r.name,
+      followers: r.followers,
+      total: r.total,
+      revenue: r.revenue,
+      budget,
+      share: total ? budget / total : 0,
+      cost_min: r.cost_min,
+      cost_max: r.cost_max,
+      // Số video mua được nếu trả theo mức thấp nhất của khoảng ước tính — 0 nghĩa là không đủ 1 video
+      videos_min_cost: r.cost_min ? Math.floor(budget / r.cost_min) : 0,
+      videos_mid_cost: mid ? Math.floor(budget / mid) : 0,
+      affordable: r.cost_min > 0 && budget >= r.cost_min,
+    };
+  });
+
+  const floorSum = out.reduce((a, r) => a + r.cost_min, 0);
+  const short = out.filter((r) => !r.affordable);
+  const numbers: Record<string, number> = { total, koc_count: out.length, cost_floor_sum: floorSum, not_affordable: short.length };
+  out.forEach((r, i) => {
+    numbers[`k${i + 1}_budget`] = r.budget;
+    numbers[`k${i + 1}_share`] = r.share;
+    numbers[`k${i + 1}_cost_min`] = r.cost_min;
+    numbers[`k${i + 1}_cost_max`] = r.cost_max;
+    numbers[`k${i + 1}_videos_min_cost`] = r.videos_min_cost;
+  });
+
+  // Chia theo điểm phù hợp hay cho ra tỉ lệ gần như phẳng (điểm các KOC sít nhau) và có thể để một
+  // vài người không đủ tiền cho nổi 1 video. Chia theo chi phí ước tính thì ngân sách bám giá thật
+  // nên ai cũng đủ — nói thẳng cho agent biết thay vì để nó trình bày một bảng phẳng như một phát hiện.
+  const shares = out.map((r) => r.share);
+  const flat = Math.max(...shares) - Math.min(...shares) < 0.05;
+  const hint =
+    basis !== "cost" && short.length
+      ? ` BẮT BUỘC: ${short.length}/${out.length} KOC không đủ 1 video với cách chia này — gọi NGAY allocate_budget lần nữa với basis='cost' (ngân sách bám chi phí ước tính từng người) rồi trình bày phương án đó. Đừng hỏi người bán có muốn thử không, hãy tự so hai cách và khuyến nghị.`
+      : flat && basis === "fit"
+        ? " LƯU Ý: điểm phù hợp của nhóm này sít nhau nên tỉ lệ chia gần như bằng nhau — đừng trình bày chênh lệch vài phần trăm như một khác biệt đáng kể."
+        : "";
+
+  const summary =
+    `Phương án chia ${vnd(total)} cho ${out.length} KOC theo ${BASIS_LABEL[basis]}${even ? " (căn cứ bằng 0 nên chia đều)" : ""} — ĐỀ XUẤT THAM KHẢO, chưa ghi vào chiến dịch. ` +
+    out
+      .map(
+        (r) =>
+          `#${r.rank} ${r.name} (id ${r.creator_id}): ${vnd(r.budget)} = ${p1(r.share)} ngân sách; chi phí ước tính ${vnd(r.cost_min)}–${vnd(r.cost_max)}/video → ${
+            r.affordable ? `đủ ${r.videos_min_cost} video ở mức thấp nhất của khoảng` : "KHÔNG đủ 1 video ngay cả ở mức thấp nhất"
+          }`,
+      )
+      .join(" || ") +
+    ` || Tổng chi phí tối thiểu để mỗi KOC làm 1 video là ${vnd(floorSum)} trên ngân sách ${vnd(total)}` +
+    (floorSum > total ? ` — THIẾU ${vnd(floorSum - total)}, nhóm này quá đắt so với ngân sách.` : `, còn dư ${vnd(total - floorSum)}.`) +
+    " Chi phí/video là ƯỚC TÍNH theo quy mô follower, không phải giá chào thật của KOC." +
+    hint;
+
+  return { type: "metric", summary, rows: out, numbers, source: { collection: C.campaigns, ref: campaignId } };
 }
 
 // ── calc ──────────────────────────────────────────────────────────────────────
@@ -662,6 +810,21 @@ export const KOC_TOOLS: ToolSpec[] = [
       "CHỈ trong chat chiến dịch: tiêu chí, tiến độ, danh sách KOC được chọn + dự phòng (id, tên, điểm phù hợp từng thành phần, ngân sách đã chia, chi phí ước tính) và bằng chứng chấm điểm của từng KOC. Gọi đầu tiên khi hỏi về chiến dịch.",
     input_schema: obj(),
     run: campaignContext,
+  },
+  {
+    name: "allocate_budget",
+    description:
+      "CHỈ trong chat chiến dịch: tính PHƯƠNG ÁN chia một tổng ngân sách cho các KOC (tỉ lệ theo điểm phù hợp / doanh thu / chi phí ước tính), kèm % ngân sách, chi phí ước tính/video của từng KOC và số video mua được — chỉ ra ai không đủ tiền cho nổi 1 video. Dùng khi người bán hỏi 'chia ngân sách thế nào' hoặc đưa ra một con số ngân sách. Là đề xuất tham khảo, KHÔNG ghi vào chiến dịch.",
+    input_schema: obj(
+      {
+        total: { type: "number", description: "Tổng ngân sách VND, lấy đúng con số người bán vừa nói (vd 100 triệu → 100000000)" },
+        creator_ids: { type: "array", items: { type: "string" }, description: "KOC muốn chia, lấy id từ campaign_context. Bỏ trống = nhóm dẫn đầu theo số KOC của chiến dịch." },
+        koc_count: { type: "integer", minimum: 1, maximum: 15, description: "Số KOC khi không truyền creator_ids" },
+        basis: { type: "string", enum: ["fit", "revenue", "cost"], default: "fit" },
+      },
+      ["total"],
+    ),
+    run: allocateBudget,
   },
   {
     name: "calc",

@@ -6,6 +6,7 @@ import { runS3 } from "./s3-content";
 import { prefetchS4Frames, runS4 } from "./s4-video";
 import { runS5 } from "./s5-recommend";
 import { defaultPlan, type BriefPlan, type Capability } from "../plan";
+import { writeOpeningAnswer } from "../chat";
 
 /**
  * Resumable campaign pipeline S2 → S3 → S4 → S5.
@@ -18,7 +19,7 @@ import { defaultPlan, type BriefPlan, type Capability } from "../plan";
 const LEASE_MS = 3 * 60_000;
 const running = new Set<string>();
 
-type Stage = "s2" | "s3" | "s4" | "s5";
+type Stage = "s2" | "s3" | "s4" | "s5" | "answering";
 
 export async function runPipeline(campaignId: string, opts: { force?: boolean } = {}) {
   if (running.has(campaignId)) return;
@@ -60,6 +61,15 @@ export async function runPipeline(campaignId: string, opts: { force?: boolean } 
     if (planned.has("recommend") && !c?.s5) {
       await mark("s5");
       await runS5(campaignId);
+    }
+    // Câu trả lời mở đầu do agent viết (xem `chat.ts`). Đặt sau cùng và có stage riêng để trang
+    // tiếp tục tự làm mới và hiện "đang viết" thay vì nhảy sang trạng thái xong rồi mới đổi nội dung.
+    await mark("answering");
+    try {
+      await writeOpeningAnswer(campaignId);
+    } catch (err) {
+      // Hỏng bước này thì chiến dịch vẫn dùng được: trang rơi về danh sách KOC như cũ
+      console.error("[pipeline] không viết được câu trả lời mở đầu", campaignId, err);
     }
     await col.updateOne({ _id: campaignId as never }, { $set: { "pipeline.stage": "done", "pipeline.finished_at": new Date() } });
   } catch (err) {

@@ -65,7 +65,7 @@ export default async function KocDetail({
   const shownProducts = products.slice(0, showAll.products ? undefined : 10);
 
   return (
-    <div className="mx-auto w-full max-w-[1440px] space-y-4 px-8 py-6 xl:px-10">
+    <div className="mx-auto w-full max-w-[1440px] space-y-4 px-4 py-5 sm:px-6 lg:px-8 lg:py-6 xl:px-10">
       <div className="text-xs text-ink-muted">
         <Link href="/kocs" className="hover:text-brand">
           Nhà sáng tạo
@@ -76,7 +76,7 @@ export default async function KocDetail({
 
       {/* ── Profile hero ── */}
       <section className="card overflow-hidden">
-        <div className="grid gap-5 p-6 lg:grid-cols-[1fr_300px]">
+        <div className="grid grid-cols-1 gap-5 p-4 sm:p-6 lg:grid-cols-[1fr_300px]">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
             <Avatar id={id} name={c.handle} size={92} />
             <div className="min-w-0 pb-1">
@@ -168,7 +168,8 @@ export default async function KocDetail({
             bodyClass="p-0"
           >
             {videos.length ? (
-              <table className="w-full">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[560px]">
                 <thead className="bg-slate-50/80 text-left text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
                   <tr>
                     <th className="w-12 px-4 py-2.5" />
@@ -210,6 +211,7 @@ export default async function KocDetail({
                   ))}
                 </tbody>
               </table>
+              </div>
             ) : (
               <Empty>Không có video trong kỳ (KOC có thể chủ yếu bán qua livestream).</Empty>
             )}
@@ -225,7 +227,8 @@ export default async function KocDetail({
             bodyClass="p-0"
           >
             {products.length ? (
-              <table className="w-full">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[560px]">
                 <thead className="bg-slate-50/80 text-left text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
                   <tr>
                     <th className="w-12 px-4 py-2.5" />
@@ -252,6 +255,7 @@ export default async function KocDetail({
                   ))}
                 </tbody>
               </table>
+              </div>
             ) : (
               <Empty>Chưa có dữ liệu sản phẩm.</Empty>
             )}
@@ -323,7 +327,7 @@ export default async function KocDetail({
 
 function HeroStat({ icon: Icon, label, value }: { icon: typeof Users; label: string; value: string }) {
   return (
-    <div className="flex items-center gap-3 border-line px-6 py-4 [&:not(:last-child)]:border-r">
+    <div className="flex items-center gap-2.5 border-line px-4 py-3 sm:gap-3 sm:px-6 sm:py-4 [&:not(:last-child)]:border-r">
       <span className="grid h-9 w-9 place-items-center rounded-xl bg-brand-soft text-brand">
         <Icon size={16} strokeWidth={2.2} />
       </span>

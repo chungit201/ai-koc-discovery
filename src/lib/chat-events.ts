@@ -7,12 +7,20 @@ import type { Reason } from "./evidence/validate";
  * bảng nào) thay vì giao diện đóng khung cứng — nhưng chỉ được chọn trong các loại khối có thật:
  *  - `para` / `bullets`: chữ do model viết, mọi con số phải trích `evidence_id` (validator kiểm).
  *  - `data`: **code điền số liệu**, model chỉ quyết có chèn hay không và đặt tiêu đề.
+ *  - `advice`: **nhận định/kinh nghiệm triển khai**, không cần bằng chứng — xem ghi chú bên dưới.
  *  - `closing`: câu mời hỏi tiếp, không được chứa con số.
+ *
+ * `advice` tồn tại vì hàng rào "mọi ý phải trích được bằng chứng" vốn chỉ hợp với phần BÁO CÁO số
+ * liệu; nó vô tình cấm luôn phần TƯ VẤN (cách cấu trúc thanh toán, nên chia mấy đợt…) — thứ người
+ * bán cần nhất mà dữ liệu Kalodata không bao giờ chứng minh được. Khối này được miễn trích dẫn
+ * nhưng đổi lại **không được nêu số tiền/tỉ lệ tự nghĩ**: câu có đơn vị tiền hay % vẫn phải đi qua
+ * đúng bộ kiểm chứng như `para`/`bullets`. Giao diện dán nhãn rõ đây là nhận định, không phải số liệu.
  */
 export type AnswerBlock =
   | { type: "para"; text: string; evidence_ids?: string[]; web_urls?: string[] }
   | { type: "heading"; text: string }
   | { type: "bullets"; items: { text: string; evidence_ids: string[]; web_urls?: string[] }[] }
+  | { type: "advice"; title?: string; items: { text: string; evidence_ids?: string[] }[] }
   | { type: "data"; data: DataBlockId; title?: string }
   /**
    * Bảng dựng từ **hàng của một bằng chứng trong phiên agent** (docs/10-koc-agent.md): model chỉ trỏ
@@ -78,7 +86,12 @@ export type AskEvent =
   | { type: "step_done"; index: number; detail: string; payload?: StepPayload }
   /** Câu trả lời cuối: các khối do model dựng + gợi ý hỏi tiếp. `text`/`reasons` giữ lại cho
    * tương thích (tiêu đề cuộc trò chuyện, tin nhắn cũ, bộ test). */
-  | { type: "conclusion"; text: string; reasons: Reason[]; blocks?: AnswerBlock[]; follow_ups?: string[] }
+  /**
+   * `markdown` là đường đi hiện tại của chế độ agent: model tự viết cả bài, kể cả bảng, rồi code
+   * đối chiếu từng con số (`lib/answer-verify.ts`). `blocks` giữ lại cho luồng cũ của chat hồ sơ
+   * KOC và cho tin nhắn đã lưu trước đây.
+   */
+  | { type: "conclusion"; text: string; reasons: Reason[]; blocks?: AnswerBlock[]; markdown?: string; unverified?: string[]; follow_ups?: string[] }
   /** Kết thúc luồng; `cost_usd` để đối chiếu chi phí thật. */
   | { type: "done"; cost_usd: number }
   | { type: "error"; message: string };

@@ -216,38 +216,6 @@ export async function searchKocs(f: KocFilters): Promise<{ rows: KocRow[]; total
   return { rows, total: res?.total[0]?.n ?? 0, scope };
 }
 
-/** Headline numbers for the explorer: computed from stored rows, never estimated. */
-export async function kocSummary(runId?: string) {
-  const db = await getDb();
-  const id = runId ?? (await defaultRun())?.id;
-  const scope = id ? await getRunScope(id) : null;
-  if (!scope) return null;
-  const [agg] = await db
-    .collection(C.creatorMetrics)
-    .aggregate<{ n: number; revenue: number; sales: number; engagements: number[] }>([
-      { $match: { category_scope: scope.category_id, date_range: scope.date_range, source: "web:creator/queryList" } },
-      {
-        $group: {
-          _id: null,
-          n: { $sum: 1 },
-          revenue: { $sum: { $ifNull: ["$revenue", 0] } },
-          sales: { $sum: { $ifNull: ["$sales_volume", 0] } },
-          engagements: { $push: "$video_engagement_rate" },
-        },
-      },
-    ])
-    .toArray();
-  const detailed = await db.collection(C.creators).countDocuments({ detail_updated_at: { $exists: true } });
-  const eng = (agg?.engagements ?? []).filter((v): v is number => typeof v === "number").sort((a, b) => a - b);
-  return {
-    kocs: agg?.n ?? 0,
-    revenue: agg?.revenue ?? 0,
-    sales: agg?.sales ?? 0,
-    medianEngagement: eng.length ? eng[Math.floor(eng.length / 2)] : null,
-    detailed,
-  };
-}
-
 // ── Campaigns (deep-search briefs) ───────────────────────────────────────────
 
 export interface CampaignView {
@@ -375,6 +343,8 @@ export async function getShortlist(
   plan: BriefPlan;
   /** Pipeline đã chạy hết kế hoạch (không suy từ S5: kế hoạch có thể không có bước đề xuất). */
   finished: boolean;
+  /** Pipeline đã xong các bước dữ liệu, agent đang viết câu trả lời mở đầu. */
+  writing: boolean;
   screened: boolean;
   videoDone: boolean;
   s3: { kocs: number; duration_ms: number } | null;
@@ -445,6 +415,7 @@ export async function getShortlist(
     summary: (camp?.scoring as ScoringSummary) ?? null,
     plan,
     finished,
+    writing: camp?.pipeline?.stage === "answering",
     screened,
     videoDone,
     s3: camp?.s3 ? { kocs: camp.s3.kocs, duration_ms: camp.s3.duration_ms } : null,

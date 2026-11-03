@@ -1,4 +1,5 @@
 import "server-only";
+import { randomUUID } from "node:crypto";
 import { getDb } from "./db/mongo";
 import { C } from "./db/collections";
 import { claude } from "./llm/claude";
@@ -18,7 +19,7 @@ import { DEEPEN_TOO_MANY, NO_AUDIO, asksAboutVoice, limitDeepen, limitExclude, w
  *
  * Kết quả **ghi đè**: chiến dịch luôn giữ một bản đề xuất mới nhất, lịch sử nằm ở `messages`.
  */
-export const CHAT_PROMPT_VERSION = "chat-v3";
+export const CHAT_PROMPT_VERSION = "chat-v4";
 /** Số lượt gần nhất đưa vào ngữ cảnh — đủ để hiểu "em xem đi" nói về KOC nào. */
 const HISTORY_TURNS = 8;
 
@@ -57,6 +58,12 @@ export interface ChatMessage {
   follow_ups?: string[];
   /** Bố cục bài trả lời do model tự dựng (đoạn văn, tiêu đề, bảng nào được chèn). */
   blocks?: AnswerBlock[];
+  /** Chế độ agent hiện tại: cả bài do model viết bằng markdown, số đã được đối chiếu. */
+  markdown?: string;
+  /** Câu trả lời mở đầu do pipeline sinh, không phải do người bán hỏi — trang dựa vào cờ này để không nói lại cùng một ý. */
+  opening?: boolean;
+  /** Con số không tìm được nguồn trong evidence của phiên — giao diện gạch đỏ. */
+  unverified?: string[];
   created_at: Date;
 }
 
@@ -69,7 +76,8 @@ Phân loại yêu cầu mới của người dùng và trả về DUY NHẤT 1 o
    "explain" (hỏi vì sao, giải thích, so sánh, hỏi số liệu của KOC trong danh sách — không đổi gì),
    "web_info" (HỎI THÔNG TIN nằm ngoài dữ liệu bán hàng về KOC/thương hiệu trong chiến dịch: phốt, tiểu sử, đời tư công khai, thương hiệu của ai, tin tức — trả lời được bằng tìm web),
    "out_of_scope" (YÊU CẦU việc hệ thống không làm được: nền tảng khác Shopee/Lazada, ngành ngoài mỹ phẩm, đặt booking, nhắn tin cho KOC…),
- "criteria": chỉ khi intent="refine_criteria" — các trường thay đổi, dùng đúng schema tiêu chí (budget_total, budget_min_per_koc, budget_max_per_koc, koc_count, followers_min, followers_max, product_focus, category_id, mcn, audience_gender, audience_ages). Tiền theo VND. Không nhắc tới thì bỏ qua.
+ "criteria": LUÔN điền khi người dùng nêu một tiêu chí cụ thể, BẤT KỂ intent là gì — các trường thay đổi, dùng đúng schema tiêu chí (budget_total, budget_min_per_koc, budget_max_per_koc, koc_count, followers_min, followers_max, product_focus, category_id, mcn, audience_gender, audience_ages). Tiền theo VND. Không nhắc tới thì bỏ qua.
+   Câu vừa HỎI vừa CHO số ("book 5 KOC này thì chia 100 triệu thế nào?") là intent="explain" KÈM criteria {budget_total: 100000000, koc_count: 5}: người dùng muốn được trả lời ngay, đồng thời hệ thống ghi nhận con số đó. Chỉ dùng intent="refine_criteria" khi họ YÊU CẦU đổi rồi chạy lại ("đổi ngân sách thành 80 triệu", "tăng lên 10 KOC").
  "creator_ids": khi intent="exclude_koc" hoặc "deepen" — mảng id lấy TỪ DANH SÁCH KOC bên dưới, không bịa id mới. Người dùng đòi xem video "tất cả"/"toàn bộ" thì trả về mảng rỗng,
  "reply": 1-2 câu tiếng Việt trả lời người dùng, nói rõ bạn sắp làm gì. KHÔNG nêu con số nào không có trong dữ liệu được cung cấp.}`;
 
@@ -100,6 +108,8 @@ export interface ChatOutcome {
   /** Trả lời bằng agent (explain / web_info): bố cục khối, các bước gọi công cụ, gợi ý hỏi tiếp. */
   agent?: boolean;
   blocks?: AnswerBlock[];
+  markdown?: string;
+  unverified?: string[];
   steps?: ChatMessage["steps"];
   follow_ups?: string[];
 }
@@ -166,27 +176,35 @@ export async function handleTurn(campaignId: string, text: string, opts: { dryRu
     return { intent: "out_of_scope", reply: NO_AUDIO, reruns: [], reasons: [], cost_usd: cost };
   }
 
-  if (intent === "refine_criteria") {
-    const { values } = sanitizeExtracted((out.criteria ?? {}) as Record<string, unknown>);
-    if (!Object.keys(values).length) {
-      // AI nói đổi tiêu chí nhưng không rút ra được giá trị hợp lệ → không chạy lại cho chắc
-      from = null;
-      reply = reply || "Mình chưa rõ cần đổi tiêu chí nào — bạn nói rõ con số giúp mình nhé.";
-    } else {
-      const criteria: Criteria = { ...(camp.criteria as Criteria), ...values };
-      Object.assign(set, {
-        criteria,
-        // bản sao phẳng dùng cho danh sách/chi tiết
-        ...("budget_total" in values ? { budget_total: criteria.budget_total } : {}),
-        ...("budget_min_per_koc" in values ? { budget_min_per_koc: criteria.budget_min_per_koc } : {}),
-        ...("budget_max_per_koc" in values ? { budget_max_per_koc: criteria.budget_max_per_koc } : {}),
-        ...("koc_count" in values ? { koc_count: criteria.koc_count } : {}),
-      });
-      // có ngân sách rồi thì kế hoạch được phép có bước đề xuất
-      const steps = [...basePlan.steps];
-      if (!steps.some((s) => s.capability === "recommend")) steps.push({ capability: "recommend", title: CAPABILITIES.recommend.title });
-      set.plan = sanitizePlan({ plan: steps, rank_by: basePlan.rank_by, questions: [] }, criteria);
-    }
+  /**
+   * Tiêu chí được ghi nhận ở MỌI intent, không riêng `refine_criteria`. Câu vừa hỏi vừa cho số
+   * ("book 5 KOC này thì chia 100 triệu thế nào?") trước đây rơi vào `explain` và con số bị vứt đi:
+   * người dùng được trả lời suông còn chiến dịch vẫn không có ngân sách, nên không đời nào chạy
+   * được bước đề xuất. Giờ lượt đó vừa được agent trả lời ngay, vừa kích hoạt chạy lại để có bản
+   * chia ngân sách thật.
+   */
+  const current = (camp.criteria ?? {}) as Partial<Criteria>;
+  const { values } = sanitizeExtracted((out.criteria ?? {}) as Record<string, unknown>);
+  const changed = Object.entries(values).filter(([k, v]) => JSON.stringify(current[k as keyof Criteria]) !== JSON.stringify(v));
+  if (changed.length) {
+    const criteria: Criteria = { ...(camp.criteria as Criteria), ...values };
+    Object.assign(set, {
+      criteria,
+      // bản sao phẳng dùng cho danh sách/chi tiết
+      ...("budget_total" in values ? { budget_total: criteria.budget_total } : {}),
+      ...("budget_min_per_koc" in values ? { budget_min_per_koc: criteria.budget_min_per_koc } : {}),
+      ...("budget_max_per_koc" in values ? { budget_max_per_koc: criteria.budget_max_per_koc } : {}),
+      ...("koc_count" in values ? { koc_count: criteria.koc_count } : {}),
+    });
+    // có ngân sách rồi thì kế hoạch được phép có bước đề xuất
+    const steps = [...basePlan.steps];
+    if (!steps.some((s) => s.capability === "recommend")) steps.push({ capability: "recommend", title: CAPABILITIES.recommend.title });
+    set.plan = sanitizePlan({ plan: steps, rank_by: basePlan.rank_by, questions: [] }, criteria);
+    from = "score_fit"; // tiêu chí đổi thì điểm đổi — bước sớm nhất, thay cho mọi `from` khác
+  } else if (intent === "refine_criteria") {
+    // AI nói đổi tiêu chí nhưng không rút ra được giá trị mới nào → không chạy lại cho chắc
+    from = null;
+    reply = reply || "Mình chưa rõ cần đổi tiêu chí nào — bạn nói rõ con số giúp mình nhé.";
   }
 
   const roster_ids = new Set(rosterIds);
@@ -223,13 +241,16 @@ export async function handleTurn(campaignId: string, text: string, opts: { dryRu
    * dịch): đọc thêm dữ liệu thật của từng KOC, xem video, tìm web khi cần. Tắt cờ `KOC_AGENT` thì vẫn
    * dùng `explain()` một lần gọi như cũ (web_info khi đó trả lời là ngoài phạm vi).
    */
+  // Agent chạy TRƯỚC khi áp thay đổi: nó phải nhìn thấy chiến dịch ở trạng thái người dùng đang
+  // xem trên màn hình, không phải trạng thái nửa vời khi các summary vừa bị xoá để chạy lại.
+  let agentOut: Awaited<ReturnType<typeof collectAgent>> | null = null;
   if ((intent === "explain" || intent === "web_info") && agentEnabled()) {
-    const out = await collectAgent(analyseCampaignAgent(campaignId, text, (camp.messages as ChatMessage[]) ?? [], rosterIds, nameOf));
-    return { intent, reruns: [], ...out, cost_usd: cost + out.cost_usd, reply: out.reply || reply };
+    agentOut = await collectAgent(analyseCampaignAgent(campaignId, text, (camp.messages as ChatMessage[]) ?? [], rosterIds, nameOf));
+    cost += agentOut.cost_usd;
   }
-  if (intent === "web_info") reply = reply || "Câu này cần tìm thông tin ngoài dữ liệu Kalodata — tính năng này đang tắt.";
+  if (intent === "web_info" && !agentOut) reply = reply || "Câu này cần tìm thông tin ngoài dữ liệu Kalodata — tính năng này đang tắt.";
 
-  if (intent === "explain") {
+  if (intent === "explain" && !agentOut) {
     const explained = await explain(campaignId, text);
     reply = explained.answer || reply;
     reasons = explained.points;
@@ -252,7 +273,66 @@ export async function handleTurn(campaignId: string, text: string, opts: { dryRu
   // Lượt chỉ hỏi han (hoặc bị luật chặn) thì không đụng gì tới chiến dịch
   const update = { ...(Object.keys(set).length ? { $set: set } : {}), ...(Object.keys(unset).length ? { $unset: unset } : {}) };
   if (Object.keys(update).length && !opts.dryRun) await col.updateOne({ _id: campaignId as never }, update);
+  if (agentOut) return { intent, reruns, ...agentOut, cost_usd: cost, reply: agentOut.reply || reply };
   return { intent, reply: reply || "Đã ghi nhận.", reruns, reasons, cost_usd: cost };
+}
+
+/**
+ * Câu trả lời MỞ ĐẦU của chiến dịch — do agent viết, thay cho đoạn văn hard-code cũ trên trang
+ * ("Từ 1.012 KOC, có 319 KOC đạt tiêu chí. Dưới đây là 5 KOC dẫn đầu…"). Đoạn đó cố định, không
+ * bao giờ đổi theo yêu cầu, không có chính kiến và không nói đã loại ai — chính là chỗ người bán
+ * thấy "cứng ngắt" nhất vì nó là màn hình ĐẦU TIÊN họ đọc.
+ *
+ * Gọi một lần ở cuối pipeline (`pipeline/run.ts`), chỉ khi chiến dịch chưa có lượt trả lời nào.
+ */
+export async function writeOpeningAnswer(campaignId: string): Promise<boolean> {
+  if (!agentEnabled()) return false;
+  const db = await getDb();
+  const col = db.collection(C.campaigns);
+  const camp = await col.findOne({ _id: campaignId as never });
+  if (!camp) return false;
+  if (((camp.messages as ChatMessage[]) ?? []).some((m) => m.role === "assistant")) return false;
+
+  const shortlistIds = (
+    await db.collection(C.campaignScores).find({ campaign_id: campaignId, shortlisted: true }, { projection: { creator_id: 1 } }).toArray()
+  ).map((r) => String(r.creator_id));
+  if (!shortlistIds.length) return false;
+  const creators = await db
+    .collection(C.creators)
+    .find({ _id: { $in: shortlistIds as never[] } }, { projection: { handle: 1, nickname: 1 } })
+    .toArray();
+  const nameOf = new Map(creators.map((c) => [String(c._id), String(c.nickname || c.handle || c._id)]));
+
+  // Chính yêu cầu gốc của người bán là câu hỏi — agent trả lời đúng cái họ đã gõ, không phải một
+  // câu mẫu do code bịa ra.
+  const question = String(camp.prompt ?? "").trim() || `Tìm ${camp.koc_count ?? 5} KOC phù hợp nhất cho chiến dịch ${String(camp.category_name ?? "")}`;
+  const out = await collectAgent(analyseCampaignAgent(campaignId, question, [], shortlistIds, nameOf));
+  if (!out.markdown && !out.blocks.length) return false;
+
+  await col.updateOne(
+    { _id: campaignId as never },
+    {
+      $push: {
+        messages: {
+          id: randomUUID(),
+          role: "assistant",
+          text: out.reply,
+          intent: "explain",
+          reruns: [],
+          reasons: out.reasons,
+          agent: true,
+          opening: true,
+          blocks: out.blocks,
+          markdown: out.markdown,
+          unverified: out.unverified,
+          steps: out.steps,
+          follow_ups: out.follow_ups,
+          created_at: new Date(),
+        },
+      } as never,
+    },
+  );
+  return true;
 }
 
 /**
@@ -303,12 +383,33 @@ async function campaignState(campaignId: string, c: Record<string, any>, nameOf:
  * Gom luồng sự kiện agent thành một tin nhắn (chat chiến dịch là server action, không stream): các
  * bước kèm bảng của từng bước, khối trả lời, lý do có nguồn, gợi ý hỏi tiếp.
  */
-async function collectAgent(events: AsyncGenerator<AskEvent>): Promise<{ reply: string; reasons: Reason[]; cost_usd: number; agent: true; blocks: AnswerBlock[]; steps: NonNullable<ChatMessage["steps"]>; follow_ups: string[] }> {
-  const out = { reply: "", reasons: [] as Reason[], cost_usd: 0, agent: true as const, blocks: [] as AnswerBlock[], steps: [] as NonNullable<ChatMessage["steps"]>, follow_ups: [] as string[] };
+async function collectAgent(events: AsyncGenerator<AskEvent>): Promise<{
+  reply: string;
+  reasons: Reason[];
+  cost_usd: number;
+  agent: true;
+  blocks: AnswerBlock[];
+  markdown: string;
+  unverified: string[];
+  steps: NonNullable<ChatMessage["steps"]>;
+  follow_ups: string[];
+}> {
+  const out = {
+    reply: "",
+    reasons: [] as Reason[],
+    cost_usd: 0,
+    agent: true as const,
+    blocks: [] as AnswerBlock[],
+    markdown: "",
+    unverified: [] as string[],
+    steps: [] as NonNullable<ChatMessage["steps"]>,
+    follow_ups: [] as string[],
+  };
   for await (const e of events) {
     if (e.type === "step_add") out.steps.push({ title: e.title, detail: "", kind: e.kind });
     else if (e.type === "step_done" && out.steps[e.index]) Object.assign(out.steps[e.index], { detail: e.detail, ...(e.payload ? { payload: e.payload } : {}) });
-    else if (e.type === "conclusion") Object.assign(out, { reply: e.text, reasons: e.reasons, blocks: e.blocks ?? [], follow_ups: e.follow_ups ?? [] });
+    else if (e.type === "conclusion")
+      Object.assign(out, { reply: e.text, reasons: e.reasons, blocks: e.blocks ?? [], markdown: e.markdown ?? "", unverified: e.unverified ?? [], follow_ups: e.follow_ups ?? [] });
     else if (e.type === "done") out.cost_usd = e.cost_usd;
     else if (e.type === "error") out.reply = e.message;
   }

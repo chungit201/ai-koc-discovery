@@ -30,12 +30,12 @@ export function KpiCard({
   highlight?: boolean;
 }) {
   return (
-    <div className={`card px-5 py-4 ${highlight ? "border-brand/30 bg-brand-soft/60" : ""}`}>
+    <div className={`card px-4 py-3.5 sm:px-5 sm:py-4 ${highlight ? "border-brand/30 bg-brand-soft/60" : ""}`}>
       <div className="flex items-center gap-1.5 text-[13px] text-ink-muted">
         {Icon && <Icon size={14} strokeWidth={2} className={highlight ? "text-brand" : KPI_TONES[tone].split(" ")[1]} />}
         {label}
       </div>
-      <div className="num mt-1.5 text-[26px] font-bold tracking-tight">{value}</div>
+      <div className="num mt-1.5 text-[22px] sm:text-[26px] font-bold tracking-tight">{value}</div>
       {hint && <div className="mt-0.5 text-[12px] text-ink-muted">{hint}</div>}
     </div>
   );

@@ -5,7 +5,8 @@ import { C } from "./db/collections";
 import { claudeAgent } from "./llm/claude";
 import { validateReasons, type Reason } from "./evidence/validate";
 import { asksAboutVoice } from "./chat-rules";
-import { autoCite, parseObject } from "./chat-creator";
+import { autoCite } from "./chat-creator";
+import { citationsIn, verifyAnswer } from "./answer-verify";
 import type { AnswerBlock, AskEvent, StepKind, StepPayload, ToolTable } from "./chat-events";
 import type { ChatMessage } from "./chat";
 
@@ -18,7 +19,7 @@ import type { ChatMessage } from "./chat";
  * ghi `evidence` của phiên; câu có số phải trích evidence của phiên và mọi số phải nằm trong claim
  * được trích (`validateReasons`), số tự tính phải đi qua `calc`. Bảng do code chép hàng từ evidence.
  */
-export const AGENT_PROMPT_VERSION = "koc-agent-v3";
+export const AGENT_PROMPT_VERSION = "koc-agent-v4";
 const HISTORY_TURNS = 8;
 
 /**
@@ -45,10 +46,20 @@ Nguồn 1 (chính): công cụ mcp__koc__*. Gọi campaign_context ĐẦU TIÊN 
 Nguồn 2 (phụ): WebSearch / WebFetch — CHỈ khi câu hỏi nằm ngoài dữ liệu Kalodata (phốt, tiểu sử, thương hiệu, tin tức…).
 
 CHIẾN DỊCH
-- Điểm phù hợp, xếp hạng, ngân sách là KẾT QUẢ của hệ thống (code chấm theo tiêu chí). Giải thích bằng điểm thành phần + bằng chứng; KHÔNG tự chấm lại, KHÔNG tự đề xuất con số ngân sách khác.
+- Điểm phù hợp và xếp hạng là KẾT QUẢ của hệ thống (code chấm theo tiêu chí): giải thích bằng điểm thành phần + bằng chứng, KHÔNG tự chấm lại.
 - "Vì sao chọn A" / "vì sao không chọn B": so điểm thành phần của A với B (campaign_context), rồi đọc thêm dữ liệu thật của cả hai (get_overview, list_products, analyze_videos… với creator_id) để chỉ ra khác biệt cụ thể. Gọi song song cho các KOC.
 - So sánh nhiều KOC: cùng một công cụ cho từng KOC, chênh lệch tính bằng calc. Có thể chèn bảng {"type":"table","source":"<evidence_id của campaign_context>"}.
-- Người dùng muốn ĐỔI gì (ngân sách, bỏ KOC…): không tự làm — nói họ nhắn yêu cầu đó, hệ thống sẽ chạy lại.`;
+
+NGÂN SÁCH — TRẢ LỜI, ĐỪNG ĐÙN
+Hỏi "chia ngân sách thế nào", "book N người thì mỗi người bao nhiêu", hoặc đưa ra một con số ngân sách: BẮT BUỘC gọi allocate_budget (total = đúng số họ nói, creator_ids = nhóm họ đang nói tới) và trả về một PHƯƠNG ÁN CỤ THỂ, kèm bảng {"type":"table","source":"<evidence_id của allocate_budget>"}.
+- TUYỆT ĐỐI KHÔNG trả lời kiểu "việc này do hệ thống tính", "bạn cần nhắn rõ yêu cầu để hệ thống chạy lại". Họ đã hỏi bạn rồi — một phương án tham khảo có căn cứ là thứ họ cần, nói rõ đây là đề xuất và hệ thống sẽ chốt lại khi chạy bước đề xuất.
+- Khai thác điều dữ liệu Kalodata KHÔNG có: giá chào thật của KOC. Nhưng bạn CÓ chi phí ước tính/video theo quy mô follower — dùng nó để nói điều đáng giá nhất: KOC nào ngốn phần lớn ngân sách chỉ cho 1 video, KOC nào đủ tiền làm nhiều video, cả nhóm có vừa ngân sách không. Luôn nói rõ đây là ước tính, không phải báo giá.
+- Nếu chiến dịch đã chạy bước đề xuất (đã có ngân sách chia sẵn): trình bày con số đã chia, KHÔNG tự chia lại.
+- Người dùng muốn ĐỔI tiêu chí (bỏ KOC, đổi số lượng…): cứ trả lời phần phân tích, rồi nói hệ thống đang chạy lại với thay đổi đó — đừng bắt họ nhắn lại.
+
+GIỌNG VĂN
+Viết như một người tư vấn đã làm nghề, không như một hệ thống báo cáo trạng thái. Mở đầu bằng CÂU TRẢ LỜI, không bằng tình trạng nội bộ. Từ ngữ nội bộ ("dự phòng", "chốt chọn", "shortlist", "pipeline", "bước S5") không được xuất hiện ở khối đầu tiên.
+Đừng lặp lại bảng xếp hạng người dùng đang nhìn thấy trên màn hình trừ khi câu hỏi là về chính thứ hạng đó.`;
 
 const RULES = `
 CÂU HỎI NGOÀI DỮ LIỆU (vd "có gia đình chưa", "là ai", "có phải chủ thương hiệu không")
@@ -62,6 +73,17 @@ d. Thêm một ý lưu ý: thông tin này lấy từ web công khai, KHÔNG n�
 e. Trả lời ĐÚNG câu được hỏi, gọn. Không chèn bảng, không thêm mục phân tích bán hàng. Nếu web cho thấy điều người bán nên biết (vd KOC là chủ thương hiệu họ đang bán) thì chỉ nói 1 câu, dùng thông tin đã có trong get_overview, rồi gợi ý hỏi tiếp ở follow_ups.
 f. Đời tư: chỉ nêu điều CHÍNH KOC đã công khai hoặc báo chí đưa tin; không nêu địa chỉ, số điện thoại, thông tin con cái, không suy đoán, không phán xét.
 
+DẪN CHỨNG — bắt buộc
+Mỗi kết quả công cụ trả về một dòng "evidence_id: ev_s_...". Mọi câu có SỐ và mọi KẾT LUẬN / GỢI Ý phải gắn dấu trích dẫn ngay sau câu đó, dạng [^ev_s_...] — đúng cái id công cụ vừa trả về. Nhiều nguồn thì đặt liền nhau: [^ev_s_a][^ev_s_b].
+Hàng trong bảng: đặt dấu trích dẫn ở ô đầu hoặc cuối hàng, hoặc một dòng ngay dưới bảng gom các nguồn của cả bảng.
+Câu không có số nhưng là nhận định rút ra từ dữ liệu ("KOC này bán chủ yếu bằng live") cũng phải trích. Chỉ lời khuyên triển khai thuần kinh nghiệm mới được để trống — và phải nói rõ đó là kinh nghiệm.
+
+ĐÀO SÂU DỮ LIỆU MÌNH CÓ TRƯỚC
+Câu hỏi nào chạm tới dữ liệu Kalodata đã thu thập thì phải vét hết nguồn 1 trước, KHÔNG được kết luận sớm sau 1-2 lần gọi công cụ, và KHÔNG đi tìm web khi trong DB còn câu trả lời.
+Vét nghĩa là: lấy số → thấy một điểm bất thường → gọi tiếp công cụ để truy nguyên nhân → đối chuẩn với KOC cùng tầm → rồi mới kết luận.
+Ví dụ: thấy doanh thu cao thì phải hỏi tiếp đến từ live hay video (get_overview), từ sản phẩm nào (list_products), video nào bán được (list_videos sort=revenue), KOC có thật sự demo sản phẩm không (analyze_videos), cao so với ai (get_peers).
+Chỉ nói "không có dữ liệu" SAU khi đã gọi đúng công cụ và nó thật sự trống.
+
 CÁCH LÀM (câu hỏi về số liệu)
 1. Nghĩ ngắn: câu hỏi cần những số nào. Gọi công cụ — gọi SONG SONG các công cụ độc lập trong cùng một lượt.
 2. Đọc kết quả, thấy thiếu thì gọi tiếp (vd sản phẩm top có video gắn → list_videos với product_id).
@@ -71,26 +93,46 @@ CÁCH LÀM (câu hỏi về số liệu)
 5. TỰ KIỂM TRA trước khi viết: mỗi kết luận phải có ít nhất 2 bằng chứng độc lập chống đỡ (vd số liệu bán hàng + điều AI thấy trong video, hoặc số của KOC + đối chuẩn). Bằng chứng mâu thuẫn nhau thì nói rõ mâu thuẫn, không chọn phe. Điều chưa đủ dữ liệu thì nói "chưa đủ dữ liệu".
    Nhận định từ analyze_videos là AI nhìn 4 khung hình, không nghe được tiếng — viết "trong khung hình thấy…", không khẳng định về lời nói.
 
-QUY TẮC SỐ (câu vi phạm bị hệ thống xoá)
+QUY TẮC SỐ
 - Chép số NGUYÊN VĂN như trong dòng tóm tắt của công cụ (vd "₫5,2 tỉ", "15%", "1,6k đơn", "gấp 7,7 lần"). Không làm tròn lại, không đổi đơn vị, không viết "khoảng/gần" thay số khác.
-- Mỗi câu/ý có số phải ghi "evidence_ids" = các evidence_id của kết quả công cụ chứa đúng các số đó (calc cũng có evidence_id riêng).
+- Mọi con số trong bài đều bị hệ thống đối chiếu lại với kết quả công cụ của phiên. Số không có nguồn sẽ bị đánh dấu trước mặt người bán — đừng ước lượng, đừng tự tính nhẩm.
+- Trong phần kinh nghiệm, tránh nêu con số minh hoạ ("ví dụ ngân sách 50-100 triệu") — nói định tính ("khi ngân sách rộng hơn") để không có số nào trong bài thiếu nguồn.
+- Muốn nói một con số KHÔNG có sẵn (tổng, tỉ trọng, gấp mấy lần, chênh lệch) → gọi calc rồi chép kết quả.
 - Doanh thu so đối chuẩn của get_peers là doanh thu MỸ PHẨM (khác doanh thu cả kênh) — nói rõ khi so.
 - Khán giả luôn ghi "(ước tính)". Phần trăm "chưa phân loại" phải nêu là thiếu dữ liệu danh mục, không đoán nó thuộc ngành nào như sự thật.
 
-CÂU TRẢ LỜI CUỐI: DUY NHẤT 1 object JSON (không markdown, không chữ ngoài JSON; trong chuỗi dùng nháy đơn thay nháy kép):
-{"summary": 1 câu không chứa số (đặt tên cuộc trò chuyện),
- "blocks": [
-   {"type":"para","text":"...","evidence_ids":["ev_s_..."],"web_urls":["https://..."]}  — khối ĐẦU TIÊN: trả lời thẳng câu hỏi trong 1-2 câu (kết luận kiểu Kalopilot),
-   {"type":"heading","text":"..."},
-   {"type":"bullets","items":[{"text":"...","evidence_ids":["..."],"web_urls":["..."]}]},
-   (evidence_ids cho ý từ dữ liệu Kalodata, web_urls cho ý từ web; ý từ web có số thì số đó phải có trong kết quả tìm kiếm/trang đã đọc)
-   {"type":"table","source":"<evidence_id của list_products | category_breakdown | list_videos | analyze_videos | get_peers | campaign_context>","title":"...","limit":10} — hệ thống vẽ bảng từ hàng của kết quả đó, bạn KHÔNG viết số trong bảng,
-   {"type":"closing","text":"1 câu mời hỏi tiếp, không số"}
- ],
- "follow_ups": 2-3 câu hỏi tiếp (≤ 20 từ) trả lời được bằng các công cụ trên}
-Ý không có số (nhận định từ video, suy luận) cũng PHẢI ghi evidence_ids của kết quả công cụ làm căn cứ — người bán bấm vào để xem bằng chứng.
-Bố cục gợi ý cho câu hỏi danh mục/sản phẩm: kết luận → bảng cơ cấu danh mục → bảng top sản phẩm → các ý đáng chú ý (danh mục cốt lõi, định vị giá, kênh bán live/video, thương hiệu) → bảng video bán hàng + bảng analyze_videos + 1-2 ý về cách KOC demo sản phẩm → đối chuẩn cùng tầm (bảng peers + 1-2 ý) → heading "Căn cứ đi đến kết luận" + bullets: mỗi ý là một bước lập luận nối bằng chứng → kết luận (vd "doanh thu 95,8% từ live + video chỉ 0,2% → KOC bán bằng live, video chủ yếu để kéo người xem"), mỗi ý trích đủ evidence_ids → closing.
-Văn phong: tiếng Việt tự nhiên như người tư vấn; câu ngắn, rõ.`;
+CÂU TRẢ LỜI CUỐI — viết MARKDOWN, bố cục do BẠN quyết
+Bạn tự chọn viết gì, theo thứ tự nào, bảng có mấy cột. Không có khuôn cho sẵn. Bọc như sau:
+
+<!--title: một câu ngắn không chứa số, đặt tên cuộc trò chuyện-->
+
+(markdown của bạn)
+
+<!--follow-ups
+- câu hỏi tiếp 1
+- câu hỏi tiếp 2
+-->
+
+Được dùng: tiêu đề ##, in đậm, danh sách, bảng markdown, link [tên](url), blockquote, emoji tiết chế.
+BẢNG: bạn tự viết bảng markdown, tự chọn cột nào đáng hiện cho ĐÚNG câu hỏi này. Hỏi "tìm KOC" thì bảng nên là KOC · follower · doanh thu; hỏi "chia ngân sách" thì thêm cột tăng trưởng và ngân sách đề xuất; hỏi "vì sao chọn A" thì mới cần điểm thành phần. Đừng bê nguyên mọi cột có sẵn vào mọi câu trả lời.
+Tên KOC viết dạng [Tên](https://www.tiktok.com/@handle) để người bán bấm sang xem — CHỈ dùng handle công cụ đã trả về, TUYỆT ĐỐI không đoán handle từ tên. Công cụ không đưa handle thì viết tên trơn, không đặt link.
+Số trong bảng cũng là số có nguồn, cùng luật như trong câu văn.
+
+CÁCH VIẾT — như một người đã làm xong việc và có ý kiến
+1. Mở đầu xác nhận việc vừa làm bằng chính lời người bán ("Được, mình lọc trong nhóm 5 KOC bạn đang xem…"). KHÔNG mở bằng tình trạng nội bộ; các từ "dự phòng", "chốt chọn", "shortlist", "pipeline", "bước S5" không được xuất hiện ở đoạn đầu.
+2. Nói rõ PHẠM VI bằng văn xuôi, in đậm từ khoá: kỳ dữ liệu 30 ngày, thị trường Việt Nam, danh mục, các bộ lọc đã áp. Người bán cần biết con số này tính trên cái gì.
+3. Bảng.
+4. Mục "Một vài lưu ý" — chỗ bạn phải có CHÍNH KIẾN:
+   - CHỌN RA người sáng giá nhất và nói vì sao bằng số.
+   - Nói về cái đã bị LOẠI và lý do (campaign_context có số KOC bị loại kèm lý do) — người bán cần biết mình không bỏ sót ai.
+   - TÀI KHOẢN SHOP: Kalodata đã loại sẵn các kênh do nhà bán tự vận hành, nhưng cờ này không bắt hết — vẫn lọt những tên kiểu "… Cosmetics Shop", "… Official Store", "Shop mỹ phẩm …". Thấy tên như vậy trong danh sách thì NÓI RA, kèm số liệu của họ, và nói rõ đây là PHÁN ĐOÁN TỪ TÊN TÀI KHOẢN chứ không phải cờ trong dữ liệu (dữ liệu vẫn xếp họ là nhà sáng tạo độc lập). Đề nghị người bán tự xác nhận trước khi loại — đừng tự quyết thay họ.
+   - Thấy ai đó yếu ở một mặt thì ĐỀ XUẤT NGƯỜI THAY cụ thể, kèm số, chứ đừng hỏi chung chung.
+   - Lời khuyên triển khai mà dữ liệu không chứng minh được (cách cấu trúc thanh toán, chia mấy đợt, nên thương lượng gì, rủi ro cần hỏi trước khi ký) — cứ nói, nhưng nói rõ đây là kinh nghiệm chứ không phải số liệu, và không được gắn số tiền tự nghĩ vào.
+5. Kết bằng một câu mời đào sâu, gợi đúng việc bạn làm được tiếp.
+
+Viết tiếng Việt tự nhiên, câu ngắn, xưng "mình". Được dùng "Được,", "Đã chốt", dấu chấm than, 1-2 emoji. Đừng viết như báo cáo: đừng liệt kê đủ mọi chỉ số chỉ vì có sẵn, hãy nói thứ thay đổi quyết định của người bán.
+Bằng chứng mâu thuẫn nhau thì nói rõ mâu thuẫn, không chọn phe. Chưa đủ dữ liệu thì nói "chưa đủ dữ liệu".
+Nhận định từ analyze_videos là AI nhìn 4 khung hình, không nghe được tiếng — viết "trong khung hình thấy…", không khẳng định về lời nói.`;
 
 const TITLES: Record<string, (input: Record<string, unknown>) => string> = {
   get_overview: () => "Lấy tổng quan kênh",
@@ -99,9 +141,10 @@ const TITLES: Record<string, (input: Record<string, unknown>) => string> = {
   list_videos: (i) => `Lấy danh sách video ${i.product_id ? "gắn sản phẩm" : ""} theo ${i.sort === "revenue" ? "doanh thu" : "lượt xem"}`.replace(/\s+/g, " "),
   get_daily: () => "Lấy doanh thu theo ngày",
   get_peers: () => "So sánh với KOC cùng tầm",
-  analyze_videos: (i) => `AI xem ${Array.isArray(i.video_ids) && i.video_ids.length ? i.video_ids.length : 3} video (4 khung hình/video)`,
+  analyze_videos: (i) => `Xem ${Array.isArray(i.video_ids) && i.video_ids.length ? i.video_ids.length : 3} video (4 khung hình/video)`,
   calc: (i) => `Tính toán (${String(i.op ?? "")})`,
   campaign_context: () => "Đọc chiến dịch: tiêu chí, điểm, ngân sách",
+  allocate_budget: (i) => `Tính phương án chia ngân sách${Number(i.total) ? ` ${Math.round(Number(i.total) / 1e6).toLocaleString("vi-VN")} triệu` : ""}`,
   WebSearch: (i) => `Tìm kiếm trên web: ${String(i.query ?? "")}`,
   WebFetch: (i) => `Đọc trang web: ${String(i.url ?? "").replace(/^https?:\/\/(www\.)?/, "").slice(0, 60)}`,
 };
@@ -119,7 +162,7 @@ function webLinks(text: string): { title: string; url: string }[] {
 }
 const KIND: Record<string, StepKind> = { get_peers: "peers", list_videos: "videos", analyze_videos: "videos" };
 /** Công cụ có hàng vẽ được thành bảng. */
-const TABLE_TOOLS = new Set(["list_products", "category_breakdown", "list_videos", "get_peers", "analyze_videos", "campaign_context"]);
+const TABLE_TOOLS = new Set(["list_products", "category_breakdown", "list_videos", "get_peers", "analyze_videos", "campaign_context", "allocate_budget"]);
 
 /** Dòng tóm tắt ngắn cho thẻ: lấy câu đầu của summary. */
 const shortDetail = (summary: string) => {
@@ -132,86 +175,46 @@ interface SessionEvidence {
   key: string;
   claim: string;
   rows?: Record<string, unknown>[];
+  numbers?: Record<string, number>;
 }
 
-/** Những gì agent đọc được trên web trong phiên — căn cứ duy nhất cho các ý có `web_urls`. */
+/** Những gì agent đọc được trên web trong phiên — căn cứ để biết link nào có thật. */
 interface WebCorpus {
   urls: Set<string>;
   text: string;
 }
 
-const NUM = /\d+(?:[.,]\d+)*/g;
 const normUrl = (u: string) => u.trim().replace(/^https?:\/\/(www\.)?/, "").replace(/[/#?]+$/, "").toLowerCase();
+const TIKTOK_LINK = /\[([^\]]*)\]\(https?:\/\/(?:www\.)?tiktok\.com\/@([A-Za-z0-9_.]+)\/?\)/g;
 
 /**
- * Lọc khối model trả về theo evidence của phiên — cùng hàng rào như luồng cũ (`sanitizeBlocks`).
- * Ý từ web: mọi URL trích phải nằm trong kết quả WebSearch/WebFetch của phiên (không bịa link), và
- * mọi con số phải xuất hiện trong claim được trích hoặc trong chữ đã đọc từ web.
+ * Link TikTok là đường rò riêng: prompt bảo model tự viết `[Tên](https://tiktok.com/@handle)`, nên
+ * nó bịa handle nghe rất thật nếu công cụ không đưa handle ra. Đã gặp: 5/5 handle trong một câu trả
+ * lời không tồn tại trong DB, trong khi 128 con số đều đúng. Handle không nằm trong kết quả công cụ
+ * của phiên thì **gỡ link**, giữ lại chữ — thà mất một đường dẫn còn hơn dẫn người bán tới nhầm kênh.
  */
-function sanitize(raw: unknown, evidence: Map<string, SessionEvidence>, web: WebCorpus): { blocks: AnswerBlock[]; dropped: number } {
-  const ev = new Map([...evidence].map(([id, e]) => [id, e.claim]));
+function checkTikTokLinks(markdown: string, rows: Record<string, unknown>[][]): { markdown: string; bad: string[] } {
+  // Handle trong DB có chỗ kèm "@", có chỗ không — chuẩn hoá trước khi so, nếu không sẽ gỡ nhầm cả link đúng
+  const known = new Set(
+    rows
+      .flat()
+      .map((r) => String(r.handle ?? "").replace(/^@/, "").toLowerCase())
+      .filter(Boolean),
+  );
+  const bad: string[] = [];
+  const out = markdown.replace(TIKTOK_LINK, (whole, label: string, handle: string) => {
+    if (known.has(handle.toLowerCase())) return whole;
+    bad.push(`@${handle}`);
+    return label;
+  });
+  return { markdown: out, bad: [...new Set(bad)] };
+}
+
+/** Link markdown trỏ ra ngoài mà model bịa (không nằm trong kết quả WebSearch/WebFetch của phiên). */
+function unknownLinks(markdown: string, web: WebCorpus): string[] {
   const known = new Set([...web.urls].map(normUrl));
-  const webNums = new Set((web.text.match(NUM) ?? []).map((n) => n.replace(/[.,]/g, "")));
-  const out: AnswerBlock[] = [];
-  let dropped = 0;
-  const hasDigit = (s: string) => /\d/.test(s);
-  const ok = (text: string, ids: string[]) => validateReasons([{ text, evidence_ids: ids }], ev).kept.length > 0;
-  /** Trả `{ids, urls}` nếu ý giữ được, null nếu phải bỏ. */
-  const cite = (text: string, ids: string[], urlsRaw: unknown): { ids: string[]; urls: string[] } | null => {
-    const urls = (Array.isArray(urlsRaw) ? urlsRaw : []).map(String).filter((u) => known.has(normUrl(u)));
-    if (Array.isArray(urlsRaw) && urlsRaw.length && !urls.length) return null; // chỉ trích link không có thật
-    const realIds = ids.filter((id) => ev.has(id));
-    if (!hasDigit(text)) return { ids: realIds, urls };
-    if (urls.length) {
-      // Ý từ web: số phải có trong web đã đọc hoặc trong claim được trích
-      const cited = new Set((realIds.map((id) => ev.get(id)!).join(" ").match(NUM) ?? []).map((n) => n.replace(/[.,]/g, "")));
-      return (text.match(NUM) ?? []).every((n) => webNums.has(n.replace(/[.,]/g, "")) || cited.has(n.replace(/[.,]/g, ""))) ? { ids: realIds, urls } : null;
-    }
-    if (ok(text, ids)) return { ids, urls };
-    const auto = autoCite(text, ev);
-    return auto.length && ok(text, auto) ? { ids: auto, urls } : null;
-  };
-  for (const b of Array.isArray(raw) ? raw : []) {
-    const o = (b ?? {}) as Record<string, unknown>;
-    const text = String(o.text ?? "").trim();
-    const ids = (Array.isArray(o.evidence_ids) ? o.evidence_ids : []).map(String);
-    switch (String(o.type)) {
-      case "heading":
-        if (text) out.push({ type: "heading", text: text.slice(0, 90) });
-        break;
-      case "para": {
-        if (!text) break;
-        const c = cite(text, ids, o.web_urls);
-        if (c) out.push({ type: "para", text: text.slice(0, 700), evidence_ids: c.ids, ...(c.urls.length ? { web_urls: c.urls } : {}) });
-        else (dropped++, console.warn("[koc-agent] bỏ đoạn vì không kiểm chứng được:", text.slice(0, 120)));
-        break;
-      }
-      case "bullets": {
-        const items: { text: string; evidence_ids: string[]; web_urls?: string[] }[] = [];
-        for (const i of Array.isArray(o.items) ? o.items : []) {
-          const x = (i ?? {}) as Record<string, unknown>;
-          const t = String(x.text ?? "").trim().slice(0, 320);
-          if (!t) continue;
-          const c = cite(t, (Array.isArray(x.evidence_ids) ? x.evidence_ids : []).map(String), x.web_urls);
-          if (c) items.push({ text: t, evidence_ids: c.ids, ...(c.urls.length ? { web_urls: c.urls } : {}) });
-          else (dropped++, console.warn("[koc-agent] bỏ ý vì không kiểm chứng được:", t.slice(0, 120)));
-        }
-        if (items.length) out.push({ type: "bullets", items });
-        break;
-      }
-      case "table": {
-        const e = evidence.get(String(o.source ?? ""));
-        if (!e || !TABLE_TOOLS.has(e.key) || !e.rows?.length) break;
-        const limit = Math.max(1, Math.min(30, Number(o.limit) || 10));
-        out.push({ type: "table", source: e._id, title: text || String(o.title ?? "").slice(0, 90) || undefined, table: { tool: e.key, rows: e.rows.slice(0, limit) } });
-        break;
-      }
-      case "closing":
-        if (text && !hasDigit(text)) out.push({ type: "closing", text: text.slice(0, 220) });
-        break;
-    }
-  }
-  return { blocks: out, dropped };
+  const urls = [...markdown.matchAll(/\]\((https?:\/\/[^)\s]+)\)/g)].map((m) => m[1]);
+  return [...new Set(urls.filter((u) => !/^(www\.)?tiktok\.com\/@/i.test(normUrl(u)) && !known.has(normUrl(u))))];
 }
 
 const historyText = (messages: ChatMessage[]) =>
@@ -339,33 +342,70 @@ async function* runAgent(opts: {
   const conclusionIdx = n;
   yield { type: "step_add", title: "Kiểm chứng số liệu & viết câu trả lời", kind: "conclusion" };
   yield { type: "step_start", index: conclusionIdx };
-  const docs = (await db.collection(C.evidence).find({ session_id: session }, { projection: { key: 1, claim: 1, rows: 1, cost_usd: 1 } }).toArray()) as unknown as (SessionEvidence & {
-    cost_usd?: number;
-  })[];
+  const docs = (await db
+    .collection(C.evidence)
+    .find({ session_id: session }, { projection: { key: 1, claim: 1, rows: 1, numbers: 1, cost_usd: 1 } })
+    .toArray()) as unknown as (SessionEvidence & { cost_usd?: number })[];
   const evidence = new Map(docs.map((d) => [String(d._id), d]));
   // Tiền AI xem video tiêu bên trong công cụ (MCP server), không nằm trong chi phí của agent
   const toolCost = docs.reduce((a, d) => a + (d.cost_usd ?? 0), 0);
-  const out = parseObject(final?.text ?? "");
-  const { blocks, dropped } = sanitize(out.blocks, evidence, web);
-  const follow_ups = (Array.isArray(out.follow_ups) ? out.follow_ups : [])
-    .filter((q): q is string => typeof q === "string" && q.trim().length > 8)
-    .map((q) => q.trim().slice(0, 120))
-    .filter((q) => !asksAboutVoice(q))
-    .slice(0, 3);
-  const summary = String(out.summary ?? "").slice(0, 400);
-  if (blocks[0]?.type !== "para" && summary && !/\d/.test(summary)) blocks.unshift({ type: "para", text: summary });
-  const reasons: Reason[] = blocks.flatMap((b) => (b.type === "bullets" ? b.items : b.type === "para" && b.evidence_ids?.length ? [{ text: b.text, evidence_ids: b.evidence_ids }] : []));
+  const parsed = parseAnswer(final?.text ?? "");
+  const { title, follow_ups } = parsed;
+  const kept = follow_ups.filter((q) => !asksAboutVoice(q)).slice(0, 3);
+  const links = checkTikTokLinks(
+    parsed.markdown,
+    docs.map((d) => d.rows ?? []),
+  );
+  const markdown = links.markdown;
+  if (links.bad.length) console.warn("[koc-agent] gỡ link TikTok có handle không nằm trong dữ liệu:", links.bad.join(", "));
+
+  // Kiểm ĐẦU RA thay vì trói đầu vào (xem lib/answer-verify.ts): model viết markdown tự do, code
+  // đối chiếu mọi con số với kho số của phiên. Số không có nguồn không bị xoá — bị đánh dấu, vì
+  // xoá một câu trong markdown làm vỡ bảng, và người bán cần thấy chỗ nào đáng ngờ hơn là thấy
+  // một khoảng trống không giải thích.
+  const pool = docs.map((d) => ({ claim: d.claim, numbers: d.numbers }));
+  const { unverified, checked } = verifyAnswer(markdown, pool);
+  const cited = citationsIn(markdown).filter((id) => evidence.has(id));
+  if (!markdown.trim())
+    console.warn(`[koc-agent] model trả ${(final?.text ?? "").length} ký tự nhưng không rút được markdown. Đầu câu trả lời:`, (final?.text ?? "").slice(0, 400));
+  if (unverified.length) console.warn(`[koc-agent] ${unverified.length}/${checked} số không đối chiếu được:`, unverified.map((u) => u.text).join(", "));
+  const badLinks = unknownLinks(markdown, web);
+  if (badLinks.length) console.warn("[koc-agent] link không có trong kết quả tìm kiếm của phiên:", badLinks.join(", "));
+
   yield {
     type: "step_done",
     index: conclusionIdx,
-    detail: `${evidence.size} kết quả công cụ làm bằng chứng · ${reasons.length} ý có nguồn${dropped ? ` · bỏ ${dropped} ý có số không kiểm chứng được` : ""}`,
+    detail: `${evidence.size} kết quả công cụ · ${cited.length} nguồn được trích · đối chiếu ${checked} con số${unverified.length ? ` · ${unverified.length} số KHÔNG có nguồn` : " · tất cả đều có nguồn"}`,
   };
   yield {
     type: "conclusion",
-    text: summary || "Mình chưa trả lời được câu này từ dữ liệu hiện có.",
-    reasons,
-    blocks: blocks.length ? blocks : [{ type: "para", text: "Mình chưa trả lời được câu này từ dữ liệu hiện có." }],
-    follow_ups,
+    text: title || "Trả lời câu hỏi về KOC",
+    reasons: [],
+    markdown: markdown || "Mình chưa trả lời được câu này từ dữ liệu hiện có.",
+    unverified: unverified.map((u) => u.text),
+    follow_ups: kept,
   };
   yield { type: "done", cost_usd: (final?.cost_usd ?? 0) + toolCost };
+}
+
+/**
+ * Rút `<!--title: …-->`, phần markdown và `<!--follow-ups … -->` ra khỏi câu trả lời.
+ * Dùng chú thích HTML thay vì JSON vì markdown nhiều dòng nhét trong chuỗi JSON rất hay vỡ
+ * (đã gặp: model trả 1.809 token mà parse ra rỗng), còn chú thích thì sai cũng chỉ mất phần bọc.
+ */
+export function parseAnswer(raw: string): { title: string; markdown: string; follow_ups: string[] } {
+  const text = raw.replace(/^\s*```(?:markdown|md)?\s*\n?|\n?```\s*$/g, "");
+  const title = /<!--\s*title:\s*([\s\S]*?)-->/i.exec(text)?.[1]?.trim().slice(0, 200) ?? "";
+  const fu = /<!--\s*follow-ups?\s*([\s\S]*?)-->/i.exec(text);
+  const follow_ups = (fu?.[1] ?? "")
+    .split("\n")
+    .map((l) => l.replace(/^\s*[-*\d.)\s]+/, "").trim())
+    .filter((l) => l.length > 8)
+    .map((l) => l.slice(0, 120));
+  const markdown = text
+    .replace(/<!--\s*title:[\s\S]*?-->/i, "")
+    .replace(/<!--\s*follow-ups?[\s\S]*?-->/i, "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .trim();
+  return { title, markdown, follow_ups };
 }

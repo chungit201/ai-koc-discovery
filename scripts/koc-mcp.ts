@@ -58,9 +58,12 @@ function toText(r: ToolResult): string {
     .join("\n");
 }
 
+/** Công cụ không đọc dữ liệu của riêng một KOC → không chèn `creator_id`. */
+const CAMPAIGN_TOOLS = new Set(["campaign_context", "allocate_budget"]);
+
 /** Chat chiến dịch: thêm tham số `creator_id` cho các công cụ đọc dữ liệu một KOC. */
 function withCreator(name: string, schema: Record<string, unknown>): Record<string, unknown> {
-  if (!MULTI || name === "calc" || name === "campaign_context") return schema;
+  if (!MULTI || name === "calc" || CAMPAIGN_TOOLS.has(name)) return schema;
   const props = (schema.properties as Record<string, unknown>) ?? {};
   return {
     ...schema,
@@ -81,7 +84,7 @@ async function handle(m: Msg): Promise<void> {
       return reply(id, {});
     case "tools/list":
       return reply(id, {
-        tools: KOC_TOOLS.filter((t) => t.name !== "campaign_context" || CAMPAIGN).map((t) => ({ name: t.name, description: t.description, inputSchema: withCreator(t.name, t.input_schema) })),
+        tools: KOC_TOOLS.filter((t) => !CAMPAIGN_TOOLS.has(t.name) || CAMPAIGN).map((t) => ({ name: t.name, description: t.description, inputSchema: withCreator(t.name, t.input_schema) })),
       });
     case "tools/call": {
       const name = String(m.params?.name ?? "");

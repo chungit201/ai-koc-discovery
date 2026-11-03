@@ -39,6 +39,9 @@ console.log(
       reply: out.reply,
       reruns: out.reruns,
       reasons: out.reasons.map((r) => r.text),
+      unverified: out.unverified,
+      steps: out.steps?.map((s) => s.title),
+      follow_ups: out.follow_ups,
       cost_usd: Math.round(out.cost_usd * 1e5) / 1e5,
       campaign: { budget: camp?.criteria?.budget_total, excluded: camp?.excluded_creator_ids, deep: camp?.deep_creator_ids, plan: camp?.plan?.steps?.map((s: { capability: string }) => s.capability) },
     },
@@ -46,5 +49,6 @@ console.log(
     1,
   ),
 );
+if (out.markdown) console.log(`\n──────── CÂU TRẢ LỜI ────────\n${out.markdown}\n`);
 await closeDb();
 process.exit(0);

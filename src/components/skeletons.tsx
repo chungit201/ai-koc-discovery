@@ -7,7 +7,7 @@ const Box = ({ className = "" }: { className?: string }) => (
   <div className={`bg-zinc-200/70 ${/rounded-/.test(className) ? "" : "rounded-md"} ${className}`} />
 );
 const Shell = ({ children, wide }: { children: React.ReactNode; wide?: boolean }) => (
-  <main className={`mx-auto w-full ${wide ? "max-w-[1760px]" : "max-w-[1440px]"} animate-pulse px-8 py-8 xl:px-10`} aria-busy="true" aria-label="Đang tải">
+  <main className={`mx-auto w-full ${wide ? "max-w-[1760px]" : "max-w-[1440px]"} animate-pulse px-4 py-5 sm:px-6 sm:py-6 lg:px-8 lg:py-8 xl:px-10`} aria-busy="true" aria-label="Đang tải">
     {children}
   </main>
 );
@@ -29,14 +29,6 @@ export function KocsSkeleton() {
           <Box className="h-10 w-40 rounded-xl" />
           <Box className="h-10 w-72 rounded-xl" />
         </div>
-      </div>
-      <div className="mt-6 grid grid-cols-2 gap-4 xl:grid-cols-4">
-        {Array.from({ length: 4 }, (_, i) => (
-          <div key={i} className="card space-y-3 px-5 py-4">
-            <Box className="h-3.5 w-32" />
-            <Box className="h-7 w-24" />
-          </div>
-        ))}
       </div>
       <div className="card mt-6 overflow-hidden">
         <div className="flex justify-between px-6 pb-3 pt-5">
@@ -76,7 +68,7 @@ export function KocDetailSkeleton() {
     <Shell>
       <Box className="h-3.5 w-48" />
       <section className="card mt-4 overflow-hidden">
-        <div className="grid gap-5 p-6 lg:grid-cols-[1fr_300px]">
+        <div className="grid grid-cols-1 gap-5 p-4 sm:p-6 lg:grid-cols-[1fr_300px]">
           <div className="flex items-center gap-4">
             <Box className="h-[92px] w-[92px] rounded-[22%]" />
             <div className="space-y-2">

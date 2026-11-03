@@ -20,7 +20,7 @@ export function ChatThread({
   action,
   placeholder = "Đổi ngân sách, bỏ một KOC, hỏi vì sao chọn…",
   quick = [],
-  waiting = "AI đang xem lại dữ liệu chiến dịch…",
+  waiting = "Đang xem lại dữ liệu chiến dịch…",
 }: {
   /** Id của đối tượng đang trao đổi (chiến dịch hoặc KOC) — gửi kèm form dưới tên `id`. */
   campaignId: string;
@@ -50,8 +50,8 @@ export function ChatThread({
               <p className="flex items-center gap-2 text-[14px] text-ink-muted">
                 <Loader2 size={15} className="animate-spin text-brand" /> {waiting}
               </p>
-            ) : m.agent && m.blocks?.length ? (
-              // Câu giải thích / so sánh / thông tin ngoài dữ liệu do agent trả lời: bảng, chip nguồn, các bước
+            ) : m.agent && (m.markdown || m.blocks?.length) ? (
+              // Câu do agent trả lời: markdown tự viết (hoặc khối của luồng cũ), chip nguồn, các bước
               <AgentMessage
                 m={m}
                 onAsk={(q) => {
@@ -78,7 +78,8 @@ export function ChatThread({
         ),
       )}
 
-      <div className="sticky bottom-0 -mx-6 bg-gradient-to-t from-page via-page to-transparent px-6 pb-5 pt-6">
+      {/* `bottom-20` trên mobile: khung nhập phải nằm TRÊN thanh tab dưới, không chồng lên nó */}
+      <div className="sticky bottom-20 -mx-4 bg-gradient-to-t from-page via-page to-transparent px-4 pb-5 pt-6 sm:-mx-6 sm:px-6 lg:bottom-0">
         <form
           ref={ref}
           action={async (fd) => {
@@ -106,7 +107,9 @@ export function ChatThread({
             className="w-full resize-none bg-transparent text-[14px] outline-none placeholder:text-ink-muted"
           />
           <div className="flex items-center justify-between gap-2">
-            <div className="flex min-w-0 flex-wrap gap-1.5">
+            {/* Trên điện thoại các chip xuống 3 dòng làm khung chat dính đáy chiếm nửa màn hình —
+                cho cuộn ngang một hàng, từ sm trở lên mới xuống dòng như cũ. */}
+            <div className="-mb-1 flex min-w-0 flex-nowrap gap-1.5 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible">
               {quick.map((q) => (
                 <button
                   key={q}
@@ -115,7 +118,7 @@ export function ChatThread({
                     const ta = e.currentTarget.form?.elements.namedItem("text") as HTMLTextAreaElement | null;
                     if (ta) ta.value = q;
                   }}
-                  className="max-w-full truncate rounded-full border border-line px-2.5 py-1 text-[12px] text-zinc-600 hover:border-brand/40 hover:text-brand"
+                  className="shrink-0 whitespace-nowrap rounded-full border border-line px-2.5 py-1 text-[12px] text-zinc-600 hover:border-brand/40 hover:text-brand sm:max-w-full sm:shrink sm:truncate"
                 >
                   {q}
                 </button>

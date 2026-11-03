@@ -10,6 +10,8 @@ export interface AgentStep {
   label: string;
   status: "done" | "running" | "pending" | "error";
   detail?: string;
+  /** Kết quả thật của bước (danh sách KOC đã đọc, video đã xem…) — để người bán nhìn thấy việc đã làm, không chỉ một dòng tóm tắt. */
+  content?: React.ReactNode;
 }
 
 /**
@@ -63,9 +65,12 @@ export function AgentSteps({ steps, done, thought }: { steps: AgentStep[]; done:
             </span>
           }
         >
-          <div className="flex items-start gap-2.5 rounded-xl bg-white px-4 py-3 text-[13.5px]">
-            <StepIcon status={s.status} />
-            <span className={s.status === "error" ? "text-red-600" : s.status === "running" ? "text-ink-muted" : ""}>{s.detail}</span>
+          <div className="space-y-3 rounded-xl bg-white px-4 py-3 text-[13.5px]">
+            <div className="flex items-start gap-2.5">
+              <StepIcon status={s.status} />
+              <span className={s.status === "error" ? "text-red-600" : s.status === "running" ? "text-ink-muted" : ""}>{s.detail}</span>
+            </div>
+            {s.content}
           </div>
         </Collapsible>
       ))}

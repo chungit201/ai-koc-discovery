@@ -7,10 +7,12 @@ import { createPortal } from "react-dom";
 import { confirmCampaign, previewCampaign, type CampaignFormState } from "@/app/actions/campaign";
 import { CAMPAIGN_CATEGORIES, PROMPT_EXAMPLES, PROMPT_MAX, PROMPT_MIN } from "@/lib/campaign";
 import { criteriaRows, type Criteria } from "@/lib/brief";
+import { AI_NAME } from "@/lib/brand";
+import { TolaMark } from "@/components/tola-mark";
 import type { AskField, PlanQuestion } from "@/lib/plan";
 
 /** Primary CTA: "Chiến dịch mới" → brief (prompt or advanced filters) → AI confirm step → campaign. */
-export function DeepSearchButton({ variant = "sidebar" }: { variant?: "sidebar" | "header" }) {
+export function DeepSearchButton({ variant = "sidebar" }: { variant?: "sidebar" | "header" | "nav" | "fab" }) {
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -22,18 +24,43 @@ export function DeepSearchButton({ variant = "sidebar" }: { variant?: "sidebar" 
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className={
-          variant === "sidebar"
-            ? "flex w-full items-center justify-center gap-2 rounded-full bg-brand px-4 py-3 text-[14px] font-semibold text-white shadow-[var(--shadow-pop)] transition hover:bg-brand-strong"
-            : "flex h-10 items-center gap-2 rounded-xl bg-brand px-4 text-[13px] font-semibold text-white shadow-[var(--shadow-pop)] transition hover:bg-brand-strong"
-        }
-      >
-        <Plus size={17} strokeWidth={2.6} />
-        Chiến dịch mới
-      </button>
+      {/**
+       * `fab` = nút trợ lý nổi giữa thanh tab dưới (mobile).
+       * Vòng tròn TỐI màu chứ không phải màu brand: thanh tab nền trắng, nút tối mới bật lên như một
+       * hành động riêng biệt thay vì hoà vào các mục điều hướng. Tên trợ lý đặt DƯỚI vòng tròn —
+       * nhét cả mark lẫn chữ vào trong 58px thì cả hai đều bé và chật.
+       * Cả cụm là một nút, bấm vào chữ cũng mở.
+       */}
+      {variant === "fab" ? (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          aria-label={`Hỏi ${AI_NAME} — tạo chiến dịch mới`}
+          className="group/fab flex flex-col items-center transition active:scale-95"
+        >
+          <span className="relative grid h-14 w-14 place-items-center overflow-hidden rounded-full bg-gradient-to-b from-[#454cab] to-[#1b1d4d] text-white shadow-[0_8px_22px_-8px_rgb(27_29_77_/_0.75)] ring-4 ring-white">
+            <TolaMark size={29} className="relative z-10" />
+            {/* Vệt sáng lướt chéo qua mặt nút — báo "đang sống", lặp thưa để không gây nhiễu mắt */}
+            <span aria-hidden className="animate-shine pointer-events-none absolute inset-y-0 -left-1/2 w-1/2 bg-gradient-to-r from-transparent via-white/45 to-transparent" />
+          </span>
+          {/* Tên nằm trong viên nền đặc, đè lên mép dưới vòng tròn — đọc rõ trên mọi nền phía sau */}
+          {/* `z-10`: vòng tròn có `ring-4` vẽ đè lên, không nâng lớp thì viên nền bị khuất */}
+          <span className="relative z-10 -mt-2 rounded-full bg-brand px-2 py-[3px] text-[10.5px] font-bold leading-none text-white shadow-sm ring-2 ring-white">{AI_NAME}</span>
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className={
+            variant === "sidebar"
+              ? "flex w-full items-center justify-center gap-2 rounded-full bg-brand px-4 py-3 text-[14px] font-semibold text-white shadow-[var(--shadow-pop)] transition hover:bg-brand-strong"
+              : "flex h-9 items-center gap-1.5 rounded-xl bg-brand px-3 text-[13px] font-semibold text-white shadow-[var(--shadow-pop)] transition hover:bg-brand-strong sm:h-10 sm:gap-2 sm:px-4"
+          }
+        >
+          <Plus size={17} strokeWidth={2.6} />
+          <span className={variant === "nav" ? "hidden sm:inline" : undefined}>Chiến dịch mới</span>
+        </button>
+      )}
       {/* Portal to <body>: the sidebar is its own stacking context, so a nested modal would sit under page content */}
       {open && createPortal(<BriefModal onClose={() => setOpen(false)} />, document.body)}
     </>
@@ -211,7 +238,7 @@ function BriefForm({
           className="flex h-10 items-center gap-2 rounded-xl bg-brand px-5 text-[13px] font-semibold text-white hover:bg-brand-strong disabled:opacity-60"
         >
           {pending ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
-          {pending ? (prompt.trim() ? "AI đang phân tích…" : "Đang xử lý…") : "Tạo chiến dịch"}
+          {pending ? (prompt.trim() ? "Đang phân tích…" : "Đang xử lý…") : "Tạo chiến dịch"}
         </button>
       </div>
     </form>
