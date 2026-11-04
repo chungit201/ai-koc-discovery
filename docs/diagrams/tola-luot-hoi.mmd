@@ -3,7 +3,10 @@ flowchart TD
   R --> H[Đọc 8 tin gần nhất + campaign_id<br/>của hội thoại từ tola_chats]
   H --> M["Giải nghĩa @handle → creator_id<br/>(+ creatorId nếu hỏi từ trang KOC)"]
   M --> AG1["Chặng 1 · Agent Tola đọc & HIỂU câu hỏi<br/>🤖 Sonnet + MCP 'koc'"]
-  AG1 -- "tra cứu / xếp hạng / so sánh<br/>→ tự gọi công cụ đọc DB" --> V
+  AG1 -- "tra cứu: chỉ công cụ DB<br/>(lượt này KHÔNG có web)" --> NW{DB đủ?}
+  NW -- "đủ" --> V
+  NW -- "còn thiếu → need-web" --> W["Lượt bổ sung web<br/>🤖 Sonnet + WebSearch/WebFetch<br/>cùng phiên evidence, viết lại hoàn chỉnh"]
+  W --> V
   AG1 -- "brief tuyển KOC<br/>→ gọi start_campaign_analysis(brief)" --> D
 
   subgraph D [Chặng 2 · Phân tích sâu — tola-deep.ts]

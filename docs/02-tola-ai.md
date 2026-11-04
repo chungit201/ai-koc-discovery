@@ -28,6 +28,10 @@ Cả hai gọi chung route `POST /api/tola/ask` và lưu chung `tola_chats` → 
 - Lịch sử: 8 tin cuối của hội thoại; `campaign_id` của hội thoại được nhớ lại để các lượt sau
   ("bỏ người này đi") vẫn sửa được chiến dịch.
 
+### 2.1b Ngành hàng có trong dữ liệu
+- DB có thể gồm NHIỀU ngành. Prompt không viết cứng ngành nào; route chèn `industryContext()` (`src/lib/industries.ts`) vào ngữ cảnh mỗi lượt: danh sách ngành THỰC SỰ đã crawl (đọc `creator_metrics.category_scope`) kèm số KOC, cache 10 phút.
+- Hỏi ngành không có trong danh sách → nói rõ chưa có số liệu, rồi tìm web.
+
 ### 2.2 Xác định "đang hỏi về ai" (`src/lib/mentions.ts`) — ⚙ code
 - Regex lấy `@handle` → tra `creators.handle` → `{found, missing}` kèm cờ `has_detail`.
 - Có `creatorId` (hỏi từ trang KOC) → thêm KOC đó lên đầu và dặn agent: câu không nói rõ ai thì là hỏi
@@ -74,8 +78,8 @@ video của các KOC được chọn.
 
 | Nhóm | Công cụ |
 |---|---|
-| Một KOC | `get_overview` (gồm doanh thu/1.000 lượt xem live & video), `list_shops` (cửa hàng KOC hợp tác — tab Cửa hàng), `list_products`, `category_breakdown`, `get_daily`, `get_peers` (gồm lượt xem video 30 ngày so nhóm), `list_videos` (thống kê toàn bộ video: số video không ra đơn, % doanh thu video từ QC trả phí), `analyze_videos` 🤖 (Sonnet vision, tối đa 5 video/lần) |
-| Tìm kiếm | `search_creators`, `list_campaigns` |
+| Một KOC | `get_overview` (gồm ngành chính + loại bán nhiều nhất, doanh thu/1.000 lượt xem live & video), `list_shops` (cửa hàng KOC hợp tác — tab Cửa hàng), `list_products`, `category_breakdown`, `get_daily`, `get_peers` (gồm lượt xem video 30 ngày so nhóm), `list_videos` (thống kê toàn bộ video: số video không ra đơn, % doanh thu video từ QC trả phí), `analyze_videos` 🤖 (Sonnet vision, tối đa 5 video/lần) |
+| Tìm kiếm | `search_creators` (lọc được theo `category` — xếp theo doanh thu KOC trong đúng danh mục, mọi ngành), `list_categories` (cây danh mục đa ngành + số liệu mỗi nút), `search_products` (sản phẩm theo **danh mục** và/hoặc từ khoá tên, không phân biệt dấu, có `exclude`; xếp theo doanh thu / đơn / số KOC bán — doanh thu ghi nhận qua các KOC trong dữ liệu), `list_campaigns` |
 | Mở phân tích sâu | `start_campaign_analysis(brief)` — không chạy gì trong MCP, chỉ báo route chạy S2→S5 (xem §2.3) |
 | Tính toán | `calc` (share / ratio / diff / sum) — chỉ nhận số đã có trong evidence của phiên (±0.5%): số tổng hợp **và số trong hàng bảng** (vd doanh thu từng ngày → cộng được "7 ngày gần nhất") |
 | Chiến dịch (chỉ hiện khi hội thoại có chiến dịch) | `campaign_context`, `allocate_budget` (chỉ đề xuất), `exclude_koc`, `update_criteria`, `deepen_koc` 🤖 — ba cái sau sửa chiến dịch rồi chạy lại S5 (và S4 cho `deepen_koc`). Không công cụ nào chạy lại S2 vì sẽ xóa kết quả S3/S4 |
@@ -83,8 +87,16 @@ video của các KOC được chọn.
 Mỗi lần gọi công cụ tạo một bản ghi `evidence` id `ev_s_<phiên>_<công cụ>_<hash tham số>` chứa
 `claim`, `rows`, `numbers`. Giao diện hiện mỗi lần gọi thành một thẻ bước kèm bảng dữ liệu.
 
+### 2.5b DB trước, web sau — ép bằng code (2 lượt)
+Prompt dặn "tra DB trước" thì model vẫn có lúc tìm web trước (đã gặp trên production). Nên route chạy câu hỏi thường (không có chiến dịch) thành 2 lượt, **cùng một phiên evidence**:
+1. **Lượt DB** (`phase: "db"`): agent **không có** công cụ web. Tra DB, viết câu trả lời; còn phần DB không có (công dụng/thành phần, đời tư, tin tức, thị trường…) thì ghi `<!--need-web: …-->` cuối bài. Route giữ kết luận lại, chưa gửi.
+2. Không có `need-web` → gửi kết luận lượt 1, xong (đa số câu hỏi — không bao giờ tìm web vô ích).
+3. Có `need-web` → **lượt web** (`phase: "web"`): có WebSearch/WebFetch, nhận bản nháp + phần còn thiếu, tìm web rồi viết lại câu trả lời hoàn chỉnh (giữ số liệu + trích dẫn DB, thêm phần web có link). Vì cùng phiên nên số DB đã tra vẫn được bộ kiểm chứng công nhận.
+
+Đánh đổi: câu cần web chậm thêm ~10–15s và tốn thêm một lượt model. Có chiến dịch → chỉ 1 lượt, không web.
+
 ### 2.6 Kiểm chứng trước khi trả lời — ⚙ code
-- Nguồn số hợp lệ: tóm tắt + số thô + **hàng bảng** của mọi công cụ trong phiên, và chữ các **trang web** agent đã đọc. Số năm (2024, 2025) không cần nguồn.
+- Nguồn số hợp lệ: tóm tắt + số thô + **hàng bảng** của mọi công cụ trong phiên, chữ các **trang web** agent đã đọc, và **câu hỏi của người dùng** (số họ tự nêu: "trả 20 triệu"). Số năm (2024, 2025) không cần nguồn. So theo trị tuyệt đối (dữ liệu -24,3% ↔ bài viết "giảm 24,3%"), nhận cả dấu trừ Unicode.
 - Tách tiêu đề và gợi ý hỏi tiếp khỏi markdown.
 - `verifyAnswer`: **mọi con số** trong câu trả lời (hiểu đơn vị k/triệu/tỷ/%) phải khớp ±2% với một số
   trong evidence của phiên. Số nguyên < 100 được miễn. Số không khớp → `unverified[]`, UI gạch chân (không xóa).
@@ -99,9 +111,13 @@ Mỗi lần gọi công cụ tạo một bản ghi `evidence` id `ev_s_<phiên>_
 | Loại | Tola làm gì |
 |---|---|
 | Dữ liệu trong DB (KOC, doanh thu, sản phẩm, video, cửa hàng, chiến dịch) | gọi công cụ, trả lời có trích dẫn |
+| Sản phẩm "tốt / hot nhất", tư vấn công dụng / thành phần / loại da (vd "5 loại dưỡng ẩm tốt nhất", "dưỡng ẩm nào cho da khô") | **không bao giờ từ chối**: `search_products` (xếp theo sức bán) **+ tìm web** cho phần công dụng/thành phần; câu trả lời tách "Theo dữ liệu bán hàng (Kalodata)" và "Theo thông tin công khai trên web" kèm link |
+| Ngành khác mỹ phẩm (thời trang…) | nói rõ DB chỉ có mỹ phẩm, rồi vẫn tìm web trả lời phần làm được |
 | Trong ngành nhưng ngoài Kalodata (đời tư KOC, quy mô thị trường) | tìm web, ghi rõ "lấy từ web, không nằm trong dữ liệu Kalodata" |
 | Dữ liệu chưa thu thập (tab Cửa hàng của KOC chưa crawl, năm cũ) | nói thẳng là chưa có, không suy đoán thành sự thật |
-| Ngoài phạm vi (thời tiết, giá vàng…) | không gọi công cụ, không tìm web — từ chối 1-2 câu và gợi ý việc làm được |
+| Hoàn toàn không liên quan làm đẹp / kinh doanh (thời tiết, giá vàng, tỉ giá, code…) | không gọi công cụ — trả lời ngắn 1-2 câu và gợi ý việc làm được |
+
+Quy tắc dùng công cụ: tra DB trước rồi mới tìm web; không gọi công cụ "thử" (truy vấn `test`/`placeholder`); không được nói "chưa truy được dữ liệu" khi chưa gọi công cụ nào.
 
 ## 3. Phân công Code ↔ LLM
 
@@ -167,7 +183,7 @@ Không dùng SDK/API key — mọi lời gọi là tiến trình `claude` CLI (`
 
 | Lệnh | Việc |
 |---|---|
-| `npm run tola:eval [-- --set v2]` | **bộ đánh giá** — v1: 27 câu cơ bản; v2: 31 câu đa dạng kiểu hỏi (không dấu, tiếng lóng, tiếng Anh, hỏi nối tiếp nhiều lượt, câu lừa / xin system prompt, KOC chưa có dữ liệu, kỳ không có dữ liệu). v1 (14 về một KOC từ trang hồ sơ, 13 thống kê chung): dữ liệu DB, ngoài dữ liệu (web), ngoài lề, thiếu dữ liệu, tuyển KOC. Tự chấm đường đi / công cụ / nội dung / số thô, ghi `logs/tola-eval-*.md`, tự xoá hội thoại + chiến dịch test. Tốn ~$1,8/lượt. Chạy lại sau mỗi lần sửa prompt. `-- --suite koc|general`, `-- --only K03,G08` |
+| `npm run tola:eval [-- --set v2]` | **bộ đánh giá** — v1: 27 câu cơ bản; v2: 37 câu đa dạng (gồm 4 câu hồi quy từ hội thoại thật: sản phẩm "tốt nhất", KOC theo nhóm sản phẩm, gõ không dấu, ngành khác) kiểu hỏi (không dấu, tiếng lóng, tiếng Anh, hỏi nối tiếp nhiều lượt, câu lừa / xin system prompt, KOC chưa có dữ liệu, kỳ không có dữ liệu). v1 (14 về một KOC từ trang hồ sơ, 13 thống kê chung): dữ liệu DB, ngoài dữ liệu (web), ngoài lề, thiếu dữ liệu, tuyển KOC. Tự chấm đường đi / công cụ / nội dung / số thô, ghi `logs/tola-eval-*.md`, tự xoá hội thoại + chiến dịch test. Tốn ~$1,8/lượt. Chạy lại sau mỗi lần sửa prompt. `-- --suite koc|general`, `-- --only K03,G08` |
 | `npm run koc:tool` | chạy một công cụ trên dữ liệu thật, không qua LLM |
 | `npm run koc:agent` | chạy agent + MCP, in từng lần gọi công cụ |
 | `npm run koc:chat` | hỏi đáp từ terminal |

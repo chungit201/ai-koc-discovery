@@ -48,15 +48,31 @@ npm run crawl:web -- [tùy chọn]
 Bộ lọc cố định của danh sách: quốc gia VN, khán giả nữ chiếm đa số, `creator_type=INDEPENDENT`, khoảng 30
 ngày kết thúc **hôm qua** (dữ liệu Kalodata trễ 1 ngày).
 
-### Chạy dài ngày (Windows)
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/crawl-web-daemon.ps1 -Fill            # chạy 1 lần
-powershell -ExecutionPolicy Bypass -File scripts/crawl-web-daemon.ps1 -Fill -Install   # scheduled task DETOLA-crawl
+### Chạy liên tục — worker pm2 trên máy local
+
+`scripts/crawl-worker.ts` chạy dưới **pm2** (`ecosystem.local.config.cjs`), thay cho `crawl-web-daemon.ps1` + scheduled task `DETOLA-crawl` (task cũ đã **Disabled**, file ps1 giữ để tham khảo).
+
+```bash
+npm run crawl:worker            # = pm2 start ecosystem.local.config.cjs && pm2 save
+pm2 logs detola-crawl           # log (cũng ghi ra logs/crawl-worker.log)
+pm2 restart detola-crawl        # chạy lại sau khi xử lý sự cố
+pm2 stop detola-crawl           # tạm dừng
 ```
-- Log ở `logs/`. Lỗi thường → thử lại sau 10 phút.
-- `-Fill` = `--fill-missing` rồi chạy `crawl-shops`.
-- **Exit code 3 (tài khoản bị cảnh báo/khóa)** → ghi file `.cache/crawl-halted` và **không chạy lại** cho tới khi người xóa file đó.
-- **Exit code 4 (chạm giới hạn: trần ngày, Kalodata báo hết lượt/limit, HTTP 429)** → ghi `.cache/crawl-limited` và **dừng hẳn**, không vòng thử lại 10 phút. Chạy tiếp: xóa file đó rồi `Start-ScheduledTask DETOLA-crawl` (crawler tự tính lại phần còn thiếu, không mất tiến độ).
+
+- **Tự bật khi đăng nhập Windows:** máy đã có `pm2-windows-startup` (chạy `pm2 resurrect`); `pm2 save` đã lưu `detola-crawl` vào danh sách.
+- **Mỗi vòng:** `crawl-web --fill-missing` → `build-categories` → `crawl-creator-shops` → `crawl-video-products` → `crawl-shops` → `build-categories`, rồi nghỉ 6 giờ (`CRAWL_WORKER_IDLE_HOURS`) và lặp lại.
+- **Theo mã thoát của từng bước:**
+
+| Mã | Nghĩa | Worker làm gì |
+|---|---|---|
+| 0 | xong | sang bước sau |
+| 5 | chạm **trần ngày tự đặt** | **ngủ tới đúng lúc cửa sổ 24h có chỗ** (tính từ `api_calls`), không gửi request nào, rồi chạy lại bước đó |
+| 4 | **Kalodata chặn** (limit / hết lượt / HTTP 429) | ghi `.cache/crawl-limited`, **dừng hẳn**, pm2 không bật lại |
+| 3 | tài khoản bị cảnh báo/khóa | ghi `.cache/crawl-halted`, dừng hẳn |
+| 6 | phiên đăng nhập hỏng | ghi `.cache/crawl-session`, dừng — chạy `npm run kalo:login`, xoá file, `pm2 restart detola-crawl` |
+| khác | lỗi tạm (mạng, DB) | thử lại bước đó sau 10 phút |
+
+Còn file chặn nào trong `.cache/` thì worker không chạy — xử lý xong, xoá file, `pm2 restart detola-crawl`.
 
 ## 4. An toàn & giới hạn
 
@@ -64,7 +80,7 @@ powershell -ExecutionPolicy Bypass -File scripts/crawl-web-daemon.ps1 -Fill -Ins
 |---|---|---|
 | `KALODATA_WEB_INTERVAL_MS` | 5000 | khoảng cách tối thiểu giữa 2 request (≤ 12/phút) |
 | `KALODATA_WEB_MAX_PER_HOUR` | 300 | chạm trần → chờ từng 5 phút |
-| `KALODATA_WEB_MAX_PER_DAY` | 1200 | chạm trần → **dừng hẳn** (`daily_cap`, exit 4). Không còn chế độ ngủ chờ (`KALODATA_WEB_WAIT_ON_CAP` đã bỏ) |
+| `KALODATA_WEB_MAX_PER_DAY` | 1200 (máy local đang đặt **6000** từ 2026-11-04 = trên thực tế không trần ngày, chỉ còn nhịp 240/giờ; chỉ dừng khi Kalodata báo giới hạn) | chạm trần → script thoát mã 5 (`daily_cap`), worker ngủ tới khi có chỗ rồi chạy tiếp |
 
 - Trần đếm trên `api_calls` (chỉ request không trúng cache) → có hiệu lực **xuyên các lượt chạy**.
 - Một hàng đợi, tuần tự. Gói web có hạn mức ~1999 lượt xem chi tiết KOC/ngày.
@@ -74,7 +90,7 @@ powershell -ExecutionPolicy Bypass -File scripts/crawl-web-daemon.ps1 -Fill -Ins
 |---|---|---|
 | `halted` (bị khóa) | `locked`, `suspect`, `banned`, `risk control` | dừng ngay mọi request, exit 3, **không thử lại** |
 | `session` | `login`, `unauthori`, HTTP 401/403 | dừng, cần `kalo:login` |
-| `quota` (bị giới hạn) | `used up`, `upgrade`, `limit`, `too many`, `frequen…`, HTTP 429 | **dừng cả lượt crawl ngay**, exit 4, daemon không tự chạy lại |
+| `quota` (Kalodata chặn) | `used up`, `upgrade`, `limit`, `too many`, `frequen…`, HTTP 429 | **dừng cả lượt crawl ngay**, exit 4, worker dừng hẳn |
 | không có dữ liệu | `not found`, `no data` | coi là rỗng |
 
 - **Cache**: response lưu ở `raw_responses` (khóa = sha256 của path + body). TTL 24 giờ, riêng

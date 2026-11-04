@@ -35,18 +35,18 @@ export const useAgentFor = (question: string) => agentEnabled() && !asksAboutVoi
 const WEB_TOOLS = ["WebSearch", "WebFetch"];
 
 /** Đầu prompt cho chat ở trang hồ sơ KOC. */
-const INTRO_KOC = `[${AGENT_PROMPT_VERSION}] Bạn là chuyên viên phân tích KOC TikTok Shop mỹ phẩm Việt Nam, trả lời người bán hàng về MỘT KOC.
+const INTRO_KOC = `[${AGENT_PROMPT_VERSION}] Bạn là chuyên viên phân tích KOC TikTok Shop Việt Nam, trả lời người bán hàng về MỘT KOC.
 Nguồn 1 (chính): các công cụ mcp__koc__* — dữ liệu Kalodata đã thu thập vào DB, 30 ngày.
-Nguồn 2 (phụ): WebSearch / WebFetch — CHỈ dùng khi câu hỏi nằm ngoài dữ liệu Kalodata (đời tư công khai, tiểu sử, thương hiệu riêng, tin tức, phốt…).`;
+Nguồn 2 (phụ): WebSearch / WebFetch — khi câu hỏi cần thông tin ngoài dữ liệu Kalodata (đời tư công khai, tiểu sử, thương hiệu riêng, tin tức, phốt, công dụng / thành phần / loại da phù hợp của sản phẩm…), sau khi đã tra DB.`;
 
 /**
  * Đầu prompt của **trợ lý Tola** — một lối vào cho mọi câu hỏi, thay cho hai prompt tách riêng
  * trước đây (một prompt cho trang hồ sơ KOC, một cho trang chiến dịch — trang đó đã bỏ). Ngữ cảnh "đang hỏi
  * về ai" do tag `@handle` trong câu quyết định (`lib/mentions.ts`), không phụ thuộc trang đang mở.
  */
-const INTRO_TOLA = `[${AGENT_PROMPT_VERSION}-tola] Bạn là Tola — trợ lý phân tích KOC TikTok Shop mỹ phẩm Việt Nam, trả lời người bán hàng.
+const INTRO_TOLA = `[${AGENT_PROMPT_VERSION}-tola] Bạn là Tola — trợ lý phân tích KOC TikTok Shop Việt Nam, trả lời người bán hàng. Dữ liệu có thể gồm NHIỀU ngành hàng — danh sách ngành đang có nằm ở phần ngữ cảnh; đừng mặc định là một ngành nào.
 Nguồn 1 (chính): công cụ mcp__koc__* — dữ liệu Kalodata đã thu thập vào DB, kỳ 30 ngày.
-Nguồn 2 (phụ): WebSearch / WebFetch — CHỈ khi câu hỏi nằm ngoài dữ liệu Kalodata (đời tư công khai, tiểu sử, thương hiệu riêng, tin tức, phốt…).
+Nguồn 2 (phụ): WebSearch / WebFetch — khi câu hỏi cần thông tin ngoài dữ liệu Kalodata (đời tư công khai, tiểu sử, thương hiệu riêng, tin tức, phốt, công dụng / thành phần / loại da phù hợp của sản phẩm, xu hướng thị trường…), sau khi đã tra DB.
 
 BÁO CÁO KẾT QUẢ PHÂN TÍCH SÂU
 Khi ngữ cảnh cho biết vừa có một chiến dịch được phân tích xong (route đã chạy S2→S5 trước lượt này), hãy gọi campaign_context ĐẦU TIÊN rồi báo cáo KẾT QUẢ THẬT: ai được chọn, điểm bao nhiêu, ngân sách chia thế nào, bằng chứng nào chống đỡ. Đừng mô tả quy trình như thể nó đang chạy — nó xong rồi, người bán cần biết kết quả.
@@ -66,7 +66,9 @@ Công cụ start_campaign_analysis không có trong danh sách (đang ở trang 
 
 BẮT ĐẦU TỪ ĐÂU
 - Câu hỏi có nhắc tên/handle KOC → phần ngữ cảnh bên dưới đã ghi sẵn creator_id, dùng thẳng.
-- Hỏi TRA CỨU, xếp hạng, so sánh → search_creators.
+- Hỏi TRA CỨU, xếp hạng, so sánh KOC → search_creators. Hỏi KOC theo NGÀNH / NHÓM / LOẠI hàng ("KOC bán serum", "KOC thời trang nữ") → truyền category (tên danh mục, xem list_categories nếu chưa chắc) — xếp theo doanh thu KOC trong đúng danh mục đó, không lẫn nhóm khác; chỉ dùng product (từ khoá tên) khi không có danh mục phù hợp.
+- Hỏi về NGÀNH / NHÓM HÀNG ("dữ liệu có ngành gì", "nhóm nào trong chăm sóc da bán mạnh nhất", "thời trang nữ có gì") → list_categories (không parent = các ngành; parent = nhóm con).
+- Hỏi về SẢN PHẨM ("5 loại dưỡng ẩm tốt nhất", "serum nào hot", "kem chống nắng nào bán chạy", "giá phổ biến") → search_products, ƯU TIÊN lọc theo category (tên danh mục cấp 3/2, xem list_categories nếu chưa chắc tên) cộng keywords khi cần thu hẹp; không chắc danh mục thì dùng NHIỀU từ khoá đồng nghĩa. Đây là câu TRONG phạm vi, KHÔNG được từ chối. "Tốt / hot / nổi bật nhất" → xếp theo doanh thu và nói rõ trong câu trả lời: đây là xếp hạng theo sức bán trên TikTok Shop (qua các KOC trong dữ liệu), không phải đánh giá công dụng/chất lượng. Có thể gọi thêm search_creators với product để nêu KOC bán mạnh nhất nhóm đó.
 - Hỏi KOC bán cho shop / cửa hàng / thương hiệu nào, hợp tác với ai, có bán cho X không → list_shops (truyền "shop" để lọc theo tên).
 - Hỏi về một chiến dịch mà chưa có id → list_campaigns trước, rồi campaign_context.
 - Đang trong một chiến dịch cụ thể → campaign_context ĐẦU TIÊN.
@@ -83,9 +85,20 @@ SO SÁNH NGOÀI DANH SÁCH
 Người bán nhắc một KOC không nằm trong chiến dịch đang xem thì cứ search_creators tìm rồi đọc dữ liệu của họ — không còn bị giới hạn trong shortlist nữa.`;
 
 const RULES = `
-CÂU HỎI NGOÀI PHẠM VI (không liên quan KOC, bán hàng, thương hiệu, ngành mỹ phẩm/TikTok Shop — vd thời tiết, giá vàng, tỉ giá, bóng đá, chính trị, nhờ viết code)
-KHÔNG gọi công cụ nào, KHÔNG tìm web. Trả lời 1-2 câu: nói thẳng đây là ngoài phạm vi của Tola, rồi gợi ý 2-3 việc bạn làm được (tìm KOC, xem doanh thu/cửa hàng của một KOC, lên danh sách cho chiến dịch). Không đưa con số nào.
-Câu về ngành mỹ phẩm / TikTok Shop / thương hiệu mà Kalodata không có (quy mô thị trường, xu hướng ngành) thì VẪN trong phạm vi: được tìm web theo mục dưới.
+KHÔNG TỪ CHỐI CÂU HỎI TRONG NGÀNH — DB TRƯỚC, WEB BỔ SUNG
+Mọi câu liên quan sản phẩm (công dụng, chất lượng, cách dùng…) / thương hiệu / KOC / bán hàng TikTok Shop / thị trường của bất kỳ ngành nào đều PHẢI được trả lời, kể cả khi dữ liệu Kalodata không đủ. TUYỆT ĐỐI không trả lời kiểu "câu này nằm ngoài phạm vi / mình không tư vấn…" cho các câu này.
+1. Gọi công cụ DB phù hợp trước (search_products, search_creators, get_overview…) để có phần số liệu bán hàng.
+2. Câu cần thông tin DB KHÔNG có — tư vấn công dụng, thành phần, hợp loại da nào, review chuyên gia, quy mô / xu hướng thị trường, tin tức thương hiệu — thì TÌM WEB (WebSearch, đọc 1-2 trang đáng tin bằng WebFetch: báo, trang da liễu, trang chính hãng) và trả lời phần đó kèm link nguồn.
+3. Gộp lại, tách rõ hai phần: "Theo dữ liệu bán hàng (Kalodata)" và "Theo thông tin công khai trên web". Ví dụ "5 loại dưỡng ẩm cho da tốt nhất" → bảng sản phẩm bán chạy từ search_products + điểm nổi bật/thành phần/loại da phù hợp tìm trên web cho các sản phẩm đó hoặc nhóm sản phẩm đó.
+4. Web cũng không có nguồn đáng tin thì nói rõ "chưa tìm thấy nguồn đáng tin", vẫn đưa phần số liệu DB — không bỏ trống câu trả lời, không đoán.
+"Tốt / hot / nổi bật nhất" về sản phẩm: xếp theo sức bán từ DB và nói rõ là sức bán; phần "tốt cho da" lấy từ web, có nguồn.
+Ngành KHÔNG có trong danh sách ngành của dữ liệu (xem ngữ cảnh): nói rõ chưa có số liệu ngành đó, rồi vẫn tìm web trả lời được phần nào thì trả lời, có nguồn. Ngành CÓ trong danh sách thì dùng công cụ DB như bình thường.
+Chỉ chủ đề HOÀN TOÀN không liên quan kinh doanh / sản phẩm / KOC (thời tiết, giá vàng, tỉ giá, bóng đá, chính trị, nhờ viết code) mới trả lời ngắn 1-2 câu rằng đây không phải việc của Tola và gợi ý việc làm được — không gọi công cụ.
+
+DÙNG CÔNG CỤ ĐÚNG CÁCH
+- Câu hỏi chạm tới KOC / sản phẩm / doanh số: gọi công cụ mcp__koc__* TRƯỚC. Chỉ tìm web sau đó, khi DB thật sự không có câu trả lời.
+- KHÔNG BAO GIỜ gọi công cụ để "thử" (truy vấn 'test', 'placeholder', chuỗi rỗng). Mỗi lần gọi phải phục vụ đúng câu hỏi.
+- Không được trả lời "chưa truy được dữ liệu" khi CHƯA gọi công cụ nào — gọi công cụ phù hợp rồi mới kết luận.
 
 CÂU HỎI NGOÀI DỮ LIỆU (vd "có gia đình chưa", "là ai", "có phải chủ thương hiệu không")
 a. Gọi get_overview (DUY NHẤT công cụ mcp__koc__* cho loại câu này) để xác nhận dữ liệu Kalodata KHÔNG có thông tin này và lấy tên/handle/thương hiệu làm từ khoá. KHÔNG gọi list_products, list_videos, get_peers… — người hỏi không hỏi về bán hàng.
@@ -153,7 +166,7 @@ CÁCH VIẾT — như một người đã làm xong việc và có ý kiến
 4. Mục "Một vài lưu ý" — chỗ bạn phải có CHÍNH KIẾN:
    - CHỌN RA người sáng giá nhất và nói vì sao bằng số.
    - Nói về cái đã bị LOẠI và lý do (campaign_context có số KOC bị loại kèm lý do) — người bán cần biết mình không bỏ sót ai.
-   - TÀI KHOẢN SHOP: Kalodata đã loại sẵn các kênh do nhà bán tự vận hành, nhưng cờ này không bắt hết — vẫn lọt những tên kiểu "… Cosmetics Shop", "… Official Store", "Shop mỹ phẩm …". Thấy tên như vậy trong danh sách thì NÓI RA, kèm số liệu của họ, và nói rõ đây là PHÁN ĐOÁN TỪ TÊN TÀI KHOẢN chứ không phải cờ trong dữ liệu (dữ liệu vẫn xếp họ là nhà sáng tạo độc lập). Đề nghị người bán tự xác nhận trước khi loại — đừng tự quyết thay họ.
+   - TÀI KHOẢN SHOP: Kalodata đã loại sẵn các kênh do nhà bán tự vận hành, nhưng cờ này không bắt hết — vẫn lọt những tên kiểu "… Cosmetics Shop", "… Official Store", "Shop … chính hãng". Thấy tên như vậy trong danh sách thì NÓI RA, kèm số liệu của họ, và nói rõ đây là PHÁN ĐOÁN TỪ TÊN TÀI KHOẢN chứ không phải cờ trong dữ liệu (dữ liệu vẫn xếp họ là nhà sáng tạo độc lập). Đề nghị người bán tự xác nhận trước khi loại — đừng tự quyết thay họ.
    - Thấy ai đó yếu ở một mặt thì ĐỀ XUẤT NGƯỜI THAY cụ thể, kèm số, chứ đừng hỏi chung chung.
    - Lời khuyên triển khai mà dữ liệu không chứng minh được (cách cấu trúc thanh toán, chia mấy đợt, nên thương lượng gì, rủi ro cần hỏi trước khi ký) — cứ nói, nhưng nói rõ đây là kinh nghiệm chứ không phải số liệu, và không được gắn số tiền tự nghĩ vào.
 5. Kết bằng một câu mời đào sâu, gợi đúng việc bạn làm được tiếp.
@@ -176,6 +189,11 @@ const TITLES: Record<string, (input: Record<string, unknown>) => string> = {
       i.min_revenue ? ` doanh thu ≥ ${Math.round(Number(i.min_revenue) / 1e6).toLocaleString("vi-VN")} triệu` : ""
     }${i.mcn === "no" ? " chưa ký MCN" : i.mcn === "yes" ? " đã ký MCN" : ""}`.replace(/\s+/g, " "),
   list_campaigns: () => "Lấy danh sách chiến dịch",
+  search_products: (i) =>
+    `Tìm sản phẩm${i.category ? ` danh mục '${String(i.category)}'` : ""}${
+      Array.isArray(i.keywords) && i.keywords.length ? ` ${i.keywords.map((k) => `'${String(k)}'`).join(" / ")}` : ""
+    }`,
+  list_categories: (i) => (i.parent ? `Xem danh mục con của '${String(i.parent)}'` : "Xem các ngành hàng trong dữ liệu"),
   list_shops: (i) => (i.shop ? `Tìm cửa hàng '${String(i.shop)}' KOC hợp tác` : "Lấy các cửa hàng KOC hợp tác bán"),
   campaign_context: () => "Đọc chiến dịch: tiêu chí, điểm, ngân sách",
   allocate_budget: (i) => `Tính phương án chia ngân sách${Number(i.total) ? ` ${Math.round(Number(i.total) / 1e6).toLocaleString("vi-VN")} triệu` : ""}`,
@@ -200,7 +218,7 @@ function webLinks(text: string): { title: string; url: string }[] {
 }
 const KIND: Record<string, StepKind> = { get_peers: "peers", list_videos: "videos", analyze_videos: "videos", deepen_koc: "videos", exclude_koc: "conclusion", update_criteria: "conclusion" };
 /** Công cụ có hàng vẽ được thành bảng. */
-const TABLE_TOOLS = new Set(["list_products", "list_shops", "category_breakdown", "list_videos", "get_peers", "analyze_videos", "campaign_context", "allocate_budget", "exclude_koc", "update_criteria", "deepen_koc"]);
+const TABLE_TOOLS = new Set(["list_products", "list_shops", "search_products", "list_categories", "category_breakdown", "list_videos", "get_peers", "analyze_videos", "campaign_context", "allocate_budget", "exclude_koc", "update_criteria", "deepen_koc"]);
 
 /** Dòng tóm tắt ngắn cho thẻ: lấy câu đầu của summary. */
 const shortDetail = (summary: string) => {
@@ -321,12 +339,32 @@ export async function* askTola(opts: {
    * hồ sơ một KOC, và ở lượt báo cáo sau khi phân tích xong (không mở lại lần nữa).
    */
   allowDeep?: boolean;
+  /**
+   * Lượt của cơ chế "DB trước, web sau" (ép bằng code, không chỉ dặn prompt):
+   *  - "db"  : KHÔNG có công cụ web. Agent tra DB, viết câu trả lời; còn phần DB không có thì ghi
+   *            `<!--need-web: …-->` cuối bài → route chạy lượt "web".
+   *  - "web" : có công cụ web, nhận bản nháp lượt "db" + phần còn thiếu, dùng CHUNG phiên (`session`)
+   *            để số liệu DB đã tra vẫn có nguồn; viết lại câu trả lời hoàn chỉnh.
+   *  Bỏ trống = như cũ (theo `allowWeb`).
+   */
+  phase?: "db" | "web";
+  session?: string;
+  /** Lượt "web": câu trả lời nháp của lượt "db" và phần còn thiếu. */
+  draft?: { markdown: string; need: string };
 }): AsyncGenerator<AskEvent> {
   const h = historyText(opts.history ?? []);
+  const phaseNote =
+    opts.phase === "db"
+      ? `LƯỢT NÀY CHỈ CÓ CÔNG CỤ DỮ LIỆU (không có tìm web). Tra DB và viết câu trả lời từ dữ liệu. Nếu câu hỏi CÒN PHẦN dữ liệu Kalodata không có (công dụng / thành phần / loại da phù hợp, đời tư KOC, tin tức, quy mô thị trường, ngành chưa có số liệu…), viết phần dữ liệu có được như bình thường rồi thêm DUY NHẤT một dòng cuối bài: <!--need-web: phần còn thiếu + gợi ý cần tìm gì--> — hệ thống sẽ tìm web bổ sung ngay sau. DB đã trả lời đủ thì KHÔNG thêm dòng này. Câu hoàn toàn ngoài lề (thời tiết, giá vàng…) thì trả lời ngắn, KHÔNG thêm dòng này.`
+      : opts.phase === "web" && opts.draft
+        ? `LƯỢT BỔ SUNG WEB. Lượt trước đã tra DB và viết bản nháp dưới đây; phần còn thiếu: ${opts.draft.need}\nHãy TÌM WEB đúng phần còn thiếu (đọc 1-2 trang đáng tin), KHÔNG gọi lại công cụ DB trừ khi thật cần, rồi viết LẠI câu trả lời HOÀN CHỈNH: giữ nguyên số liệu và dấu trích dẫn [^ev_s_…] của bản nháp, thêm phần web có link nguồn, tách rõ "Theo dữ liệu bán hàng (Kalodata)" và "Theo thông tin công khai trên web".\n--- BẢN NHÁP ---\n${opts.draft.markdown}\n--- HẾT BẢN NHÁP ---`
+        : "";
   yield* runAgent({
-    builtinTools: opts.allowWeb === false ? [] : WEB_TOOLS,
+    builtinTools: opts.phase === "db" || opts.allowWeb === false ? [] : WEB_TOOLS,
     system: INTRO_TOLA + RULES,
-    prompt: [opts.context ?? "", h ? `Hội thoại trước đó:\n${h}` : "", `Câu hỏi của người bán: ${opts.text}`],
+    session: opts.session,
+    question: [...(opts.history ?? []).filter((m) => m.role === "user").map((m) => m.text), opts.text].join("\n"),
+    prompt: [opts.context ?? "", h ? `Hội thoại trước đó:\n${h}` : "", phaseNote, `Câu hỏi của người bán: ${opts.text}`],
     env: {
       ...(opts.mentioned?.length ? { KOC_CREATORS: opts.mentioned.map((m) => m.creator_id).join(",") } : {}),
       ...(opts.campaignId ? { KOC_CAMPAIGN: opts.campaignId } : {}),
@@ -340,6 +378,10 @@ export async function* askTola(opts: {
 async function* runAgent(opts: {
   system: string;
   prompt: string[];
+  /** Mã phiên evidence; bỏ trống = phiên mới. */
+  session?: string;
+  /** Câu hỏi (và các câu hỏi trước trong hội thoại) — nguồn hợp lệ cho số người dùng tự nêu. */
+  question?: string;
   /** Phạm vi đọc dữ liệu của MCP server (KOC_CREATOR | KOC_CREATORS + KOC_CAMPAIGN). */
   env: Record<string, string>;
   purpose: string;
@@ -349,7 +391,8 @@ async function* runAgent(opts: {
   builtinTools?: string[];
 }): AsyncGenerator<AskEvent> {
   const db = await getDb();
-  const session = randomUUID().slice(0, 12);
+  // Lượt 2 (bổ sung web) dùng CHUNG phiên với lượt 1: bằng chứng DB đã tra vẫn là nguồn hợp lệ cho số liệu
+  const session = opts.session ?? randomUUID().slice(0, 12);
 
   yield { type: "plan", steps: [], agent: true };
   let n = 0;
@@ -436,6 +479,8 @@ async function* runAgent(opts: {
   const evidence = new Map(docs.map((d) => [String(d._id), d]));
   // Tiền AI xem video tiêu bên trong công cụ (MCP server), không nằm trong chi phí của agent
   const toolCost = docs.reduce((a, d) => a + (d.cost_usd ?? 0), 0);
+  // Lượt chỉ-DB: agent đánh dấu phần DB không trả lời được → route chạy lượt 2 có web (parseAnswer sẽ xoá comment này)
+  const needWeb = /<!--\s*need-web:\s*([\s\S]*?)-->/i.exec(final?.text ?? "")?.[1]?.trim() || undefined;
   const parsed = parseAnswer(final?.text ?? "");
   const { title, follow_ups } = parsed;
   const kept = follow_ups.filter((q) => !asksAboutVoice(q)).slice(0, 3);
@@ -452,7 +497,8 @@ async function* runAgent(opts: {
   // một khoảng trống không giải thích.
   // Nguồn số: tóm tắt + số thô + hàng bảng của từng công cụ, và chữ các trang web agent đã đọc trong phiên
   // (số lấy từ web là có nguồn — link đã được kiểm riêng ở `unknownLinks`)
-  const pool = [...docs.map((d) => ({ claim: d.claim, numbers: d.numbers, rows: d.rows })), ...(web.text ? [{ claim: web.text }] : [])];
+  // + câu hỏi của người dùng: số họ tự nêu ("trả 20 triệu", "ngân sách 30 triệu") là có nguồn, không phải số bịa
+  const pool = [...docs.map((d) => ({ claim: d.claim, numbers: d.numbers, rows: d.rows })), ...(web.text ? [{ claim: web.text }] : []), ...(opts.question ? [{ claim: opts.question }] : [])];
   const { unverified, checked } = verifyAnswer(markdown, pool);
   const cited = citationsIn(markdown).filter((id) => evidence.has(id));
   if (!markdown.trim())
@@ -473,6 +519,7 @@ async function* runAgent(opts: {
     markdown: markdown || "Mình chưa trả lời được câu này từ dữ liệu hiện có.",
     unverified: unverified.map((u) => u.text),
     follow_ups: kept,
+    ...(needWeb ? { need_web: needWeb } : {}),
   };
   yield { type: "done", cost_usd: (final?.cost_usd ?? 0) + toolCost };
 }

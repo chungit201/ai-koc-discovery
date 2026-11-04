@@ -91,7 +91,17 @@ export type AskEvent =
    * đối chiếu từng con số (`lib/answer-verify.ts`). `blocks` giữ lại cho luồng cũ của chat hồ sơ
    * KOC và cho tin nhắn đã lưu trước đây.
    */
-  | { type: "conclusion"; text: string; reasons: Reason[]; blocks?: AnswerBlock[]; markdown?: string; unverified?: string[]; follow_ups?: string[] }
+  | {
+      type: "conclusion";
+      text: string;
+      reasons: Reason[];
+      blocks?: AnswerBlock[];
+      markdown?: string;
+      unverified?: string[];
+      follow_ups?: string[];
+      /** Lượt chỉ-DB báo còn phần DB không có (lý do + gợi ý tìm gì) → route chạy lượt 2 có web. Không gửi xuống trình duyệt. */
+      need_web?: string;
+    }
   /** Kết thúc luồng; `cost_usd` để đối chiếu chi phí thật. */
   | { type: "done"; cost_usd: number }
   | { type: "error"; message: string }

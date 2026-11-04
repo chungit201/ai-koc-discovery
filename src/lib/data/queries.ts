@@ -10,14 +10,9 @@ async function getDb() {
 import { C } from "../db/collections";
 import type { ChatMessage } from "../chat";
 
-export const CATEGORY_NAMES: Record<string, string> = {
-  "601450": "Làm đẹp",
-  "848776": "Chăm sóc da",
-  "848648": "Trang điểm",
-  "601602": "Kem chống nắng da mặt",
-  "848776,848648": "Mỹ phẩm (Chăm sóc da + Trang điểm)",
-  all: "Tất cả ngành",
-};
+// Tên ngành khai báo tập trung ở lib/industries.ts — DB có nhiều ngành, không riêng mỹ phẩm
+import { CATEGORY_NAMES } from "../industries";
+export { CATEGORY_NAMES };
 
 export interface CrawlRunView {
   id: string;

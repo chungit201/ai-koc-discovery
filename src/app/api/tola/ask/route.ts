@@ -4,6 +4,7 @@ import { C } from "@/lib/db/collections";
 import { askTola } from "@/lib/chat-creator-agent";
 import { mentionById, mentionContext, resolveMentions } from "@/lib/mentions";
 import { runDeepSearch } from "@/lib/tola-deep";
+import { industryContext } from "@/lib/industries";
 import type { ChatMessage } from "@/lib/chat";
 import type { AskEvent, StepKind, StepPayload } from "@/lib/chat-events";
 
@@ -14,6 +15,12 @@ import type { AskEvent, StepKind, StepPayload } from "@/lib/chat-events";
  * Ngữ cảnh "đang hỏi về ai" lấy từ tag `@handle` trong chính câu hỏi (`lib/mentions.ts`), không
  * phụ thuộc trang nào đang mở. Cả lượt hỏi–đáp lưu vào `tola_chats` để mở lại vẫn còn.
  */
+/** `need_web` là tín hiệu nội bộ giữa hai lượt — không gửi xuống trình duyệt. */
+function withoutNeedWeb(e: Extract<AskEvent, { type: "conclusion" }>): AskEvent {
+  const { need_web: _drop, ...visible } = e; // eslint-disable-line @typescript-eslint/no-unused-vars
+  return visible;
+}
+
 export async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as { text?: string; threadId?: string; campaignId?: string; creatorId?: string };
   /** Hỏi từ popup ở trang hồ sơ KOC: KOC đang xem coi như đã được tag dù câu hỏi không có `@handle`. */
@@ -61,12 +68,15 @@ export async function POST(req: Request) {
          * `done` của từng chặng không gửi xuống: client coi `done` là hết lượt.
          */
         let cost = 0;
-        const pipe = async (gen: AsyncGenerator<AskEvent, unknown>): Promise<{ brief: string | null; ret: unknown }> => {
+        type Conclusion = Extract<AskEvent, { type: "conclusion" }>;
+        /** `hold`: giữ kết luận lại, chưa gửi — lượt chỉ-DB có thể còn lượt bổ sung web thay thế nó. */
+        const pipe = async (gen: AsyncGenerator<AskEvent, unknown>, hold = false): Promise<{ brief: string | null; ret: unknown; conclusion: Conclusion | null }> => {
           const offset = steps.length;
           let brief: string | null = null;
+          let conclusion: Conclusion | null = null;
           for (;;) {
             const r = await gen.next();
-            if (r.done) return { brief, ret: r.value };
+            if (r.done) return { brief, ret: r.value, conclusion };
             const e = r.value;
             if (e.type === "deep_request") {
               brief = e.brief;
@@ -74,7 +84,10 @@ export async function POST(req: Request) {
             }
             const shifted = e.type === "step_done" || e.type === "step_start" ? { ...e, index: e.index + offset } : e;
             if (e.type === "done") cost += e.cost_usd ?? 0;
-            else send(shifted);
+            else if (e.type === "conclusion") {
+              conclusion = e;
+              if (!hold) send(withoutNeedWeb(e));
+            } else send(shifted);
             if (e.type === "step_add") steps.push({ title: e.title, detail: "", kind: e.kind });
             // Giữ cả `payload`: bước xem video mang theo dẫn chứng từng video, mất nó là thẻ trống
             else if (e.type === "step_done" && steps[e.index + offset]) Object.assign(steps[e.index + offset], { detail: e.detail, ...(e.payload ? { payload: e.payload } : {}) });
@@ -90,12 +103,15 @@ export async function POST(req: Request) {
         const subjectNote = subject
           ? `Người bán đang hỏi từ trang hồ sơ của KOC ${subject.name} (@${subject.handle}, creator_id ${subject.creator_id}). Câu hỏi không nói rõ là ai ("KOC này", "bạn này", hoặc không nhắc tên) thì hiểu là hỏi RIÊNG về KOC này — trả lời về đúng người này, không tìm/so sánh KOC khác trừ khi được yêu cầu.`
           : "";
-        const ask = (campaign: string | undefined, extra: string, allowDeep: boolean) =>
+        // Dữ liệu có thể gồm nhiều ngành — đưa danh sách ngành THẬT trong DB vào ngữ cảnh thay vì viết cứng trong prompt
+        const industries = await industryContext();
+        const ask = (campaign: string | undefined, extra: string, allowDeep: boolean, phase?: { phase: "db" | "web"; session: string; draft?: { markdown: string; need: string } }) =>
           askTola({
+            ...phase,
             text,
             history,
             mentioned: mentions.found,
-            context: [subjectNote, mentionContext(mentions), extra].filter(Boolean).join("\n\n"),
+            context: [industries, subjectNote, mentionContext(mentions), extra].filter(Boolean).join("\n\n"),
             campaignId: campaign,
             // Có chiến dịch → câu trả lời nằm trong DB; không cho agent lan man ra web
             allowWeb: !campaign,
@@ -109,7 +125,19 @@ export async function POST(req: Request) {
          * Không mở phân tích sâu khi đã có chiến dịch hoặc đang hỏi về một KOC cụ thể từ trang hồ sơ.
          */
         activeCampaignId = campaignId ?? prevCampaign;
-        const first = await pipe(ask(activeCampaignId, "", !activeCampaignId && !subject));
+        /**
+         * DB TRƯỚC, WEB SAU — ép bằng code: lượt đầu agent KHÔNG có công cụ web (prompt dặn thì model
+         * vẫn có lúc tìm web trước — đã gặp trên production). Lượt đó báo còn phần DB không có
+         * (`need_web`) thì mới chạy lượt bổ sung có web, CÙNG phiên evidence. Có chiến dịch thì không
+         * dùng web nên chạy một lượt như cũ.
+         */
+        const session = activeCampaignId ? undefined : randomUUID().slice(0, 12);
+        const first = await pipe(ask(activeCampaignId, "", !activeCampaignId && !subject, session ? { phase: "db", session } : undefined), Boolean(session));
+        if (session && !first.brief && first.conclusion) {
+          if (first.conclusion.need_web)
+            await pipe(ask(activeCampaignId, "", false, { phase: "web", session, draft: { markdown: first.conclusion.markdown ?? "", need: first.conclusion.need_web } }));
+          else send(withoutNeedWeb(first.conclusion));
+        }
 
         if (first.brief) {
           // Chặng 2 — phân tích sâu S2→S5 ngay trong lượt, phát tiến độ từng bước ra chat

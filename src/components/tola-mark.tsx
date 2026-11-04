@@ -29,7 +29,7 @@ export function TolaOrb({ size = 56, active = false, className = "" }: { size?: 
         className="animate-spin-slow absolute inset-0 rounded-full bg-[conic-gradient(from_0deg,#34d399,#38bdf8,#6366f1,#38bdf8,#34d399)] shadow-[0_6px_18px_-8px_rgb(14_116_144_/_0.6)]"
       />
       <span className={`absolute grid place-items-center overflow-hidden rounded-full ${active ? "bg-brand-soft" : "bg-white"}`} style={{ inset: border }}>
-        <TolaMark size={Math.round(size * 0.37)} className="animate-bob relative z-10" />
+        <TolaMark size={Math.round(size * 0.37)} className="animate-bob relative z-[1]" /* chỉ cần nổi trên vệt sáng trong huy hiệu — z cao sẽ đè ô chat sticky khi cuộn */ />
         <span aria-hidden className="animate-shine pointer-events-none absolute inset-y-0 -left-1/2 w-1/2 bg-gradient-to-r from-transparent via-sky-100/70 to-transparent" />
       </span>
     </span>

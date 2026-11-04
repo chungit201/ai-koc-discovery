@@ -53,6 +53,8 @@ while ($true) {
     $code = $LASTEXITCODE
     "$(Get-Date -Format s) shops exit $code" | Out-File $log -Append -Encoding utf8
   }
+  # Cây danh mục + phân loại sản phẩm: chỉ đọc/ghi DB, không gọi Kalodata — chạy sau mọi lượt có dữ liệu mới
+  cmd /c "npx tsx --env-file=.env.local scripts/build-categories.ts >> `"$log`" 2>&1"
   if ($code -eq 0) { exit 0 }                                   # finished
   if ($code -eq 4) { "limit reached at $(Get-Date -Format s), see $log" | Out-File $limited -Encoding utf8; exit 0 }   # limit → stop, no retry
   if ($code -eq 3) { "account warning/lock at $(Get-Date -Format s), see $log" | Out-File $halt -Encoding utf8; exit 0 }

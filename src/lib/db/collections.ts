@@ -4,7 +4,7 @@ import type { Db } from "mongodb";
 export const C = {
   rawResponses: "raw_responses",
   apiCalls: "api_calls",
-  categories: "categories",
+  categories: "categories", // cây danh mục đa ngành (cấp 1 ngành → 2 nhóm → 3 loại) + số liệu — scripts/build-categories.ts
   creators: "creators",
   creatorMetrics: "creator_metrics",
   products: "products",
@@ -83,6 +83,17 @@ export async function ensureIndexes(db: Db): Promise<void> {
   );
   await db.collection(C.creatorShops).createIndex({ creator_id: 1, seller_id: 1, date_range: 1 }, { unique: true });
   await db.collection(C.videos).createIndex({ creator_id: 1 });
+  await db.collection(C.categories).createIndex({ parent_id: 1 });
+  await db.collection(C.products).createIndex({ "category.l3.id": 1 });
+  await db.collection(C.products).createIndex({ "category.l2.id": 1 });
+  await db.collection(C.products).createIndex({ "category.l1.id": 1 });
+  // Truy vấn theo ngành nhanh: doanh thu theo danh mục, KOC theo ngành/nhóm
+  await db.collection(C.creatorProducts).createIndex({ "cat.l1": 1 });
+  await db.collection(C.creatorProducts).createIndex({ "cat.l2": 1 });
+  await db.collection(C.creatorProducts).createIndex({ "cat.l3": 1 });
+  await db.collection(C.creators).createIndex({ "industry.l1.id": 1 });
+  await db.collection(C.creators).createIndex({ "industry.l2.id": 1 });
+  await db.collection(C.creators).createIndex({ "category_mix.id": 1 });
   await db.collection(C.stageItems).createIndex({ run_id: 1, stage: 1, item_id: 1 }, { unique: true });
   await db.collection(C.stageItems).createIndex({ run_id: 1, stage: 1, status: 1 });
 }

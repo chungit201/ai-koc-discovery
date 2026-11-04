@@ -21,16 +21,22 @@ interface WebEnvelope<T> {
 }
 
 /**
- * Mã thoát cho script crawl, daemon (crawl-web-daemon.ps1) dựa vào đây:
- *   3 = tài khoản bị cảnh báo/khóa → ghi .cache/crawl-halted, KHÔNG BAO GIỜ tự chạy lại
- *   4 = chạm giới hạn (trần ngày tự đặt, Kalodata báo hết lượt/limit, HTTP 429) → ghi .cache/crawl-limited, dừng hẳn
- *   1 = lỗi tạm (mạng, DB) → daemon thử lại sau 10 phút
+ * Mã thoát cho script crawl — worker (scripts/crawl-worker.ts, chạy dưới pm2) dựa vào đây:
+ *   3 = tài khoản bị cảnh báo/khóa → .cache/crawl-halted, KHÔNG BAO GIỜ tự chạy lại
+ *   4 = KALODATA chặn (báo hết lượt / "limit" / HTTP 429) → .cache/crawl-limited, dừng hẳn
+ *   5 = chạm TRẦN NGÀY do mình tự đặt (KALODATA_WEB_MAX_PER_DAY) → worker ngủ tới khi cửa sổ 24h có chỗ rồi chạy tiếp
+ *   6 = phiên đăng nhập hỏng → .cache/crawl-session, chờ người chạy `npm run kalo:login`
+ *   1 = lỗi tạm (mạng, DB) → worker thử lại sau 10 phút
  */
 export const LIMIT_EXIT = 4;
+export const DAILY_CAP_EXIT = 5;
+export const SESSION_EXIT = 6;
 export function exitCodeFor(err: unknown): number {
   const kind = (err as { kind?: string })?.kind;
   if (kind === "locked") return 3;
-  if (kind === "daily_cap" || kind === "quota") return LIMIT_EXIT;
+  if (kind === "quota") return LIMIT_EXIT;
+  if (kind === "daily_cap") return DAILY_CAP_EXIT;
+  if (kind === "session") return SESSION_EXIT;
   return 1;
 }
 

@@ -215,7 +215,7 @@ export function TolaChat({
 
       {/* ── Ô nhập ── */}
       {/* Ghim sát đáy; nền + vùng an toàn iPhone để chữ cuộn phía sau không lộ qua */}
-      <div className="sticky bottom-0 -mx-4 mt-5 bg-page/95 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur sm:-mx-6 sm:px-6">
+      <div className="sticky bottom-0 z-20 -mx-4 mt-5 bg-page/95 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur sm:-mx-6 sm:px-6">
         <form
           onSubmit={(e) => {
             e.preventDefault();

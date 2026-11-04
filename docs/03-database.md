@@ -43,7 +43,8 @@ Windows: `scripts/db-tunnel.ps1 -Install` cài scheduled task `DETOLA-db-tunnel`
 |---|---|---|---|
 | `creators` | 1 KOC. `_id` = creator id Kalodata | `handle` (có `@`), `nickname`, `bio`, `followers`, `debut_date`, `audience.{gender_majority, age_buckets_matched, age_majority, raw}`; từ crawl chi tiết: `status`, `region`, `mcn`, `shop_name`, `main_categories`, `product_count`, `contact.{email,zalo,whatsapp,facebook,instagram,line,homepage}`, `detail_updated_at` | `_id` |
 | `creator_metrics` | 1 KOC × khoảng ngày × phạm vi ngành hàng | `date_range` (`start~end`), `category_scope` (id ngành hoặc `"all"`), `source`, `revenue`, `sales_volume`, `unit_price`, `views`, `new_followers`, `video_engagement_rate`, `revenue_growth_rate`, `revenue_trend[]`, `views_trend[]`; scope `all` có thêm `video_revenue`, `live_revenue`, `shop_revenue`, `video_views`, `live_views`, `daily[]` | unique `{creator_id, date_range, category_scope}` |
-| `products` | 1 sản phẩm | `name`, `seller_id`, `seller_name` | `_id` |
+| `products` | 1 sản phẩm | `name`, `seller_id`, `seller_name`; **`category`** `{l1, l2, l3: {id, name}, source: kalodata|inferred, confidence}` — `l3` có thể `null` (chỉ chắc tới cấp 2) | `_id`, `category.l1.id`, `category.l2.id`, `category.l3.id` |
+| `categories` | 1 nút cây danh mục **đa ngành** (`_id` = category id Kalodata) | `name`, `level` (1 ngành · 2 nhóm · 3 loại), `parent_id`, `path[]`, `stats {products, kocs, revenue, orders}` | `parent_id` |
 | `creator_products` | 1 KOC × sản phẩm × khoảng ngày | `revenue`, `sales_volume`, `unit_price`, `source` | unique `{creator_id, product_id, date_range}` |
 | `videos` | 1 video | `creator_id`, `title`, `publish_date`, `duration_sec`, `content_type`, `product_ids[]`, `views`, `revenue`, `sales`, `gpm`, quảng cáo: `is_ad`, `ad_view_ratio`, `ad_revenue_ratio`, `ad_cost`, `ad_roas`, `ad_cpa`; `is_ai_video` | `{creator_id}` |
 | `creator_shops` | 1 KOC × 1 shop hợp tác × khoảng ngày (tab "Cửa hàng") | `seller_id`, `shop_name`, `seller_type` (`BRAND`…), `rank`, `revenue`, `sales`, `live_revenue`, `video_revenue`, `product_count`. `creators.shops_updated_at` đánh dấu đã crawl (kể cả khi 0 shop). Trang KOC chỉ đọc `date_range` mới nhất | unique `{creator_id, seller_id, date_range}` |
@@ -84,7 +85,42 @@ Windows: `scripts/db-tunnel.ps1 -Install` cài scheduled task `DETOLA-db-tunnel`
 
 `categories` có khai báo trong `C` nhưng hiện không có code ghi vào.
 
-## 4. Dọn dữ liệu
+## 4. Ngành hàng & cây danh mục
+
+**Cây danh mục** (`npm run build:categories`, chỉ đọc/ghi DB, ~6s; daemon crawl tự chạy sau mỗi lượt):
+1. Nút cây lấy từ sản phẩm đã có danh mục Kalodata (Open API trả `category_l1/2/3`) — hiện 17 ngành cấp 1, 190 nút.
+2. Sản phẩm chưa có danh mục (crawl web không trả) được **suy ra từ tên**: so với sản phẩm đã gắn nhãn giống nhất (k láng giềng, trọng số idf), bỏ phiếu cấp 3; chưa chắc cấp 3 nhưng đồng thuận nhóm → gắn tới cấp 2. Kiểm chứng chéo trên nhãn gốc: đúng cấp 2 ~91%, cấp 3 ~76%. Hiện phủ ~59% sản phẩm, **~78% doanh thu**.
+3. `stats` mỗi nút cộng từ `creator_products` (kỳ mới nhất mỗi cặp KOC × sản phẩm).
+
+Không gắn cứng ngành: crawl ngành mới về (có nhãn Kalodata) là cây và bộ phân loại tự có ngành đó.
+
+Mã ngành = category id Kalodata; "phạm vi" = các mã nối dấu phẩy, đúng như `creator_metrics.category_scope` (vd `848776,848648`). Tên ngành khai báo **một chỗ duy nhất**: `CATEGORY_NAMES` trong `src/lib/industries.ts`. Thêm ngành mới: crawl ngành đó (`crawl:web -- --categories <id>`) + thêm tên mã vào `CATEGORY_NAMES`; Tola tự nhận ngành mới qua `industriesInDb()`.
+
+> Còn nhiều chỗ code viết cứng mã mỹ phẩm (`848776`, `848648`) — xem danh sách cần chuyển trong lịch sử thay đổi; khi sửa file nào thì chuyển sang đọc từ `industries.ts`.
+
+## 4b. Schema ngành hàng cho Tola (tra cứu nhanh)
+
+Danh mục được **gắn sẵn ở mọi collection hay truy vấn** để Tola không phải nối bảng mỗi lần hỏi. Tất cả do `npm run build:categories` tính (chỉ đọc/ghi DB, ~11s; daemon crawl chạy sau mỗi lượt).
+
+| Collection | Trường | Nội dung | Index |
+|---|---|---|---|
+| `categories` | cả document | cây **ngành (cấp 1) → nhóm (cấp 2) → loại (cấp 3)**, `path[]`, `stats {products, kocs, revenue, orders}` | `parent_id` |
+| `products` | `category` | `{l1, l2, l3: {id, name}, source: kalodata\|inferred, confidence}` | `category.l1.id`, `.l2.id`, `.l3.id` |
+| `creator_products` | `cat` | `{l1, l2, l3}` (mã) — doanh thu theo danh mục **không cần nối** `products` | `cat.l1`, `cat.l2`, `cat.l3` |
+| `creators` | `industry` | ngành / nhóm / loại **chính** của KOC theo doanh thu: `{l1, l2, l3: {id, name, share}, classified_revenue}` | `industry.l1.id`, `industry.l2.id` |
+| `creators` | `kalodata_categories`, `list_main_category` | mã ngành/nhóm/loại Kalodata gắn trên hồ sơ KOC / trang danh sách — nguồn dự phòng cho `industry` (`industry.source = kalodata_profile`) khi chưa phân loại được sản phẩm nào | — |
+| `creators` | `category_mix` | top 5 nhóm (cấp 2) + top 8 loại (cấp 3) KOC bán: `[{id, name, level, share}]` | `category_mix.id` |
+
+| Câu hỏi | Tra bằng | Công cụ Tola |
+|---|---|---|
+| Dữ liệu có ngành gì / nhóm nào lớn | `categories` (sort `stats.revenue`) | `list_categories` |
+| Sản phẩm bán chạy của một loại | `products.category.lN.id` → `creator_products` | `search_products` (`category`) |
+| KOC bán mạnh nhất một nhóm/loại | `creator_products.cat.lN` gộp theo KOC | `search_creators` (`category`) |
+| KOC này thuộc ngành nào | `creators.industry`, `category_mix` | `get_overview` |
+
+Đo thử: tìm KOC theo loại "Serum & Tinh chất" ~0,6s; lọc `category_mix.id` qua index ~40ms.
+
+## 5. Dọn dữ liệu
 
 | Lệnh | Xóa gì | Giữ gì |
 |---|---|---|

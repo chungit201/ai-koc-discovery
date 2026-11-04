@@ -71,7 +71,7 @@ function toText(r: ToolResult): string {
 }
 
 /** Công cụ không đọc dữ liệu của riêng một KOC → không chèn `creator_id`. */
-const GLOBAL_TOOLS = new Set(["search_creators", "list_campaigns", "start_campaign_analysis"]);
+const GLOBAL_TOOLS = new Set(["search_creators", "search_products", "list_categories", "list_campaigns", "start_campaign_analysis"]);
 /**
  * Mở phân tích sâu — ẩn khi đã có chiến dịch (sửa bằng các công cụ chiến dịch) hoặc khi hỏi từ trang
  * hồ sơ một KOC (`KOC_NO_DEEP=1`: câu hỏi là về người đó, không phải brief tuyển người mới).

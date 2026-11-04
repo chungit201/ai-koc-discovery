@@ -52,7 +52,8 @@ export interface NumberToken {
 /** Mọi con số trong markdown, đã quy về giá trị tuyệt đối (có nhân đơn vị). */
 export function numbersIn(md: string): NumberToken[] {
   const out: NumberToken[] = [];
-  for (const m of md.matchAll(TOKEN)) {
+  // Dấu trừ Unicode (U+2212) → "-" để "−24,3%" được đọc như số âm
+  for (const m of md.replace(/−/g, "-").matchAll(TOKEN)) {
     const n = toNumber(m[1]);
     if (n === null) continue;
     const unit = m[2]?.toLowerCase();
@@ -97,7 +98,8 @@ const SMALL = 100;
 
 export function isKnown(v: number, pool: number[]): boolean {
   if (Math.abs(v) < SMALL && Number.isInteger(v)) return true;
-  return pool.some((k) => (k === 0 ? v === 0 : Math.abs(v - k) / Math.abs(k) <= TOLERANCE));
+  // So theo trị tuyệt đối: dữ liệu -24,3% nhưng bài viết "giảm 24,3%" là cùng một con số
+  return pool.some((k) => (k === 0 ? v === 0 : Math.abs(Math.abs(v) - Math.abs(k)) / Math.abs(k) <= TOLERANCE));
 }
 
 export interface VerifyResult {

@@ -176,6 +176,20 @@ body {
   }
 }
 
+/*
+ * iOS Safari tự PHÓNG TO trang khi chạm vào ô nhập có chữ < 16px (ô chat Tola, ô tìm KOC… đang 13–14px).
+ * Không chặn bằng `maximum-scale=1` (mất quyền zoom để đọc của người dùng) — chỉ nâng chữ ô nhập lên
+ * 16px trên thiết bị cảm ứng (desktop giữ cỡ cũ). Không dùng `@supports (-webkit-touch-callout: none)`:
+ * bộ xử lý CSS lược mất khối đó khi biên dịch. `!important` để thắng class cỡ chữ Tailwind trên từng ô.
+ */
+@media (hover: none) and (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-fade,
   .animate-rise,

@@ -301,6 +301,9 @@ async function saveListRows(db: Db, rows: Record<string, unknown>[], age: string
             bio: r.signature ?? null,
             followers: n(r.followers),
             debut_date: r.creatorDebut ?? null,
+            // Ngành chính theo Kalodata (chuỗi JSON {pri_main_category, sec_main_category}) — có cho MỌI KOC trong danh sách,
+            // kể cả KOC chưa crawl chi tiết → creators.industry dự phòng
+            list_main_category: parseMainCategory(r.main_category),
             // From the list filter: Kalodata places this creator in a female-majority, `age`-majority bucket
             "audience.gender_majority": "female",
             "audience.source": "kalodata_web",
@@ -345,6 +348,23 @@ async function saveListRows(db: Db, rows: Record<string, unknown>[], age: string
   );
 }
 
+/** main_category của /creator/queryList: chuỗi JSON {pri_main_category:[cấp1], sec_main_category:["cấp1-cấp2"]}. */
+function parseMainCategory(v: unknown): { l1: string[]; l2: string[] } | null {
+  try {
+    const o = (typeof v === "string" ? JSON.parse(v) : v) as { pri_main_category?: unknown[]; sec_main_category?: unknown[] } | null;
+    if (!o) return null;
+    return { l1: (o.pri_main_category ?? []).map(String), l2: (o.sec_main_category ?? []).map((x) => String(x).split("-").pop() ?? "").filter(Boolean) };
+  } catch {
+    return null;
+  }
+}
+
+/** pri/sec/ter_cate_ids của /creator/detail → mã ngành cấp 1/2/3 dạng chuỗi. */
+function kalodataCats(d: Record<string, unknown>) {
+  const ids = (v: unknown) => (Array.isArray(v) ? v.map(String) : []);
+  return { l1: ids(d.pri_cate_ids), l2: ids(d.sec_cate_ids), l3: ids(d.ter_cate_ids) };
+}
+
 async function saveDetail(db: Db, id: string, d: Record<string, string | number | string[]>) {
   const gender = d.followerSex === "Majority Female" ? "female" : d.followerSex === "Majority Male" ? "male" : null;
   await db.collection(C.creators).updateOne(
@@ -362,6 +382,8 @@ async function saveDetail(db: Db, id: string, d: Record<string, string | number 
         mcn: d.has_mcn ? String(d.mcn_name ?? "") : null,
         shop_name: d.shop_name || null,
         main_categories: d.main_category ?? [],
+        // Mọi ngành / nhóm / loại KOC bán (mã Kalodata) — nguồn dự phòng cho creators.industry khi chưa phân loại được sản phẩm
+        kalodata_categories: kalodataCats(d),
         "audience.gender_majority": gender,
         "audience.age_majority": d.followerAgeMax || null,
         "audience.raw": { followerSex: d.followerSex, followerAgeMax: d.followerAgeMax },

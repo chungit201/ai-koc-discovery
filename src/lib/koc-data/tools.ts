@@ -10,6 +10,7 @@ import { DEEPEN_MAX_KOCS, EXCLUDE_MAX_KOCS } from "../chat-rules";
 import { topBrand } from "../evidence/creator";
 import { categoryBreakdown, channelTotals, denominator, productFacts, UNCATEGORISED, type CategoryLevel } from "./facts";
 import { EXCLUDE_LABELS, focusPattern } from "../scoring/rules";
+import { scopeName } from "../industries";
 
 /**
  * Bộ công cụ cho agent hỏi đáp về KOC (docs/02-tola-ai.md). Mỗi hàm **chỉ đọc DB**, trả
@@ -68,6 +69,13 @@ async function getOverview({ creatorId }: ToolCtx): Promise<Out> {
   const parts = [`${String(creator.nickname ?? "")} (${String(creator.handle ?? "")}), ${compact(followers)} follower`];
   parts.push(creator.status === "INDEPENDENT" ? "nhà sáng tạo độc lập" : `gắn với shop ${String(creator.shop_name ?? "không rõ")}`);
   if (creator.mcn) parts.push(`MCN ${String(creator.mcn)}`);
+  // Ngành của KOC (creators.industry / category_mix, do build-categories tính từ doanh thu theo danh mục)
+  const ind = creator.industry as { l1?: { name: string }; l2?: { name: string; share: number } } | undefined;
+  const mix = ((creator.category_mix as { name: string; level: number; share: number }[]) ?? []).filter((m) => m.level === 3).slice(0, 3);
+  if (ind?.l1 && ind.l2)
+    parts.push(
+      `ngành chính ${ind.l1.name} › ${ind.l2.name} (${p1(ind.l2.share)} doanh thu sản phẩm đã phân loại)${mix.length ? `; loại bán nhiều nhất: ${mix.map((m) => `${m.name} ${p1(m.share)}`).join(", ")}` : ""}`,
+    );
   if (t?.revenue) {
     Object.assign(numbers, {
       revenue: t.revenue,
@@ -478,6 +486,192 @@ async function listShops({ creatorId }: ToolCtx, args: Args): Promise<Out> {
   };
 }
 
+// ── search_products ───────────────────────────────────────────────────────────
+const VI_CLASS: Record<string, string> = {
+  a: "aàáảãạăằắẳẵặâầấẩẫậ",
+  e: "eèéẻẽẹêềếểễệ",
+  i: "iìíỉĩị",
+  o: "oòóỏõọôồốổỗộơờớởỡợ",
+  u: "uùúủũụưừứửữự",
+  y: "yỳýỷỹỵ",
+  d: "dđ",
+};
+/** Từ khoá → regex KHÔNG phân biệt dấu ("duong am" khớp "Dưỡng Ẩm"); người bán hay gõ không dấu. */
+function viFuzzy(term: string): string {
+  const base = term
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/đ/gi, "d")
+    .toLowerCase()
+    .trim();
+  return [...base].map((ch) => (VI_CLASS[ch] ? `[${VI_CLASS[ch]}]` : ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))).join("").replace(/\s+/g, "\\s+");
+}
+
+// ── list_categories ───────────────────────────────────────────────────────────
+interface CatNode {
+  id: string;
+  name: string;
+  level: number;
+  path: string[];
+}
+/** Danh mục theo id hoặc TÊN (không phân biệt dấu, khớp một phần); tên trùng nhiều nút → ưu tiên cấp cao, doanh thu lớn. */
+async function resolveCategory(q: string): Promise<CatNode | null> {
+  const db = await getDb();
+  const byId = await db.collection(C.categories).findOne({ _id: q as never });
+  const doc =
+    byId ??
+    (await db
+      .collection(C.categories)
+      .find({ name: new RegExp(viFuzzy(q), "i") })
+      .sort({ level: 1, "stats.revenue": -1 })
+      .limit(1)
+      .next());
+  return doc ? { id: String(doc._id), name: String(doc.name), level: Number(doc.level), path: (doc.path as string[]) ?? [String(doc.name)] } : null;
+}
+
+/**
+ * Cây danh mục ĐA NGÀNH (cấp 1 ngành → 2 nhóm → 3 loại) kèm số sản phẩm / KOC / doanh thu mỗi nút —
+ * để agent biết dữ liệu có ngành gì, nhóm nào lớn, rồi lọc search_products theo đúng danh mục.
+ * Không truyền `parent` → các ngành cấp 1; truyền tên/id → các nút con của nó.
+ */
+async function listCategories(_ctx: ToolCtx, args: Args): Promise<Out> {
+  const db = await getDb();
+  const parent = typeof args.parent === "string" && args.parent.trim() ? await resolveCategory(args.parent.trim()) : null;
+  if (args.parent && !parent) throw new Error(`Không có danh mục '${String(args.parent)}'`);
+  const limit = int(args.limit, 15, 50);
+  const docs = await db
+    .collection(C.categories)
+    .find(parent ? { parent_id: parent.id } : { level: 1 })
+    .sort({ "stats.revenue": -1, "stats.products": -1 })
+    .limit(limit)
+    .toArray();
+  const src = { collection: C.categories, ref: parent?.id ?? "root" };
+  if (!docs.length)
+    return { type: "metric", summary: parent ? `'${parent.path.join(" › ")}' không có danh mục con trong dữ liệu` : "Chưa dựng cây danh mục (chạy npm run build:categories)", rows: [], numbers: {}, source: src };
+  const total = docs.reduce((a, d) => a + num(d.stats?.revenue), 0);
+  const rows = docs.map((d, i) => ({
+    rank: i + 1,
+    category_id: String(d._id),
+    name: String(d.name),
+    level: Number(d.level),
+    path: ((d.path as string[]) ?? []).join(" › "),
+    products: num(d.stats?.products),
+    kocs: num(d.stats?.kocs),
+    revenue: num(d.stats?.revenue),
+    orders: num(d.stats?.orders),
+    share: total ? num(d.stats?.revenue) / total : 0,
+  }));
+  const numbers: Record<string, number> = { nodes: rows.length };
+  rows.forEach((r) => Object.assign(numbers, { [`c${r.rank}_revenue`]: r.revenue, [`c${r.rank}_products`]: r.products, [`c${r.rank}_kocs`]: r.kocs, [`c${r.rank}_share`]: r.share }));
+  return {
+    type: "metric",
+    summary:
+      `${parent ? `Danh mục con của '${parent.path.join(" › ")}'` : "Các ngành (cấp 1) trong dữ liệu"} — ${rows.length} nút, xếp theo doanh thu ghi nhận qua KOC (kỳ 30 ngày gần nhất; danh mục của một phần sản phẩm được suy ra từ tên): ` +
+      rows.map((r) => `#${r.rank} ${r.name} [id ${r.category_id}] ${vnd(r.revenue)} (${p1(r.share)}), ${compact(r.products)} sản phẩm, ${compact(r.kocs)} KOC`).join("; "),
+    rows,
+    numbers,
+    source: src,
+  };
+}
+
+/**
+ * Sản phẩm trong DB theo TỪ KHOÁ tên (hoặc nhiều từ khoá — OR), xếp theo doanh thu / số đơn / số KOC
+ * bán. Doanh thu là phần ghi nhận QUA CÁC KOC đã thu thập (kỳ mới nhất của từng KOC), không phải toàn bộ
+ * doanh thu sản phẩm trên TikTok Shop — summary nói rõ để agent không nói quá.
+ * Trả lời câu "loại X nào tốt / hot / bán chạy nhất" bằng dữ liệu bán hàng thay vì từ chối.
+ */
+async function searchProducts(_ctx: ToolCtx, args: Args): Promise<Out> {
+  const db = await getDb();
+  const terms = (Array.isArray(args.keywords) ? args.keywords : [args.keywords]).map((t) => String(t ?? "").trim()).filter((t) => t.length >= 2).slice(0, 6);
+  // Lọc theo DANH MỤC (id hoặc tên, cấp nào cũng được) — chính xác hơn lọc chữ trong tên ("son dưỡng ẩm" ≠ kem dưỡng ẩm)
+  const cat = typeof args.category === "string" && args.category.trim() ? await resolveCategory(args.category.trim()) : null;
+  if (args.category && !cat) throw new Error(`Không có danh mục '${String(args.category)}' — gọi list_categories để xem tên/id đúng`);
+  if (!terms.length && !cat) throw new Error("Cần keywords (từ khoá tên sản phẩm) hoặc category (danh mục từ list_categories)");
+  const limit = int(args.limit, 10, 30);
+  const sort = args.sort === "orders" ? "orders" : args.sort === "kocs" ? "kocs" : "revenue";
+  const filter: Record<string, unknown> = {};
+  if (terms.length) filter.name = new RegExp(terms.map(viFuzzy).join("|"), "i");
+  if (cat) filter[`category.l${cat.level}.id`] = cat.id;
+  // Loại nhóm trùng chữ nhưng khác loại — vẫn hữu ích khi sản phẩm chưa xếp được danh mục
+  const ex = (Array.isArray(args.exclude) ? args.exclude : []).map((t) => String(t ?? "").trim()).filter((t) => t.length >= 2).slice(0, 8);
+  const exRe = ex.length ? new RegExp(ex.map(viFuzzy).join("|"), "i") : null;
+  const prods = (await db.collection(C.products).find(filter, { projection: { name: 1, seller_id: 1, seller_name: 1, category: 1 } }).toArray()).filter(
+    (p) => !exRe || !exRe.test(String(p.name ?? "")),
+  );
+  const what = [cat ? `danh mục '${cat.path.join(" › ")}'` : "", terms.length ? `tên khớp ${terms.map((t) => `'${t}'`).join(" / ")}` : ""].filter(Boolean).join(", ");
+  const src = { collection: C.creatorProducts, ref: `products:${cat?.id ?? ""}:${terms.join(",")}` };
+  if (!prods.length) return { type: "product", summary: `Không có sản phẩm nào trong dữ liệu thuộc ${what}`, rows: [], numbers: { matched: 0 }, source: src };
+  const meta = new Map(prods.map((p) => [String(p._id), p]));
+
+  // Mỗi cặp KOC × sản phẩm lấy kỳ MỚI NHẤT (cùng một KOC có thể có 2 kỳ 30 ngày → không cộng trùng)
+  const agg = await db
+    .collection(C.creatorProducts)
+    .aggregate<{ _id: string; revenue: number; orders: number; kocs: number; price: number; top: { creator_id: string; revenue: number } }>([
+      { $match: { product_id: { $in: [...meta.keys()] } } },
+      { $sort: { updated_at: -1 } },
+      { $group: { _id: { p: "$product_id", c: "$creator_id" }, revenue: { $first: "$revenue" }, orders: { $first: "$sales_volume" }, price: { $first: "$unit_price" } } },
+      { $sort: { revenue: -1 } },
+      {
+        $group: {
+          _id: "$_id.p",
+          revenue: { $sum: "$revenue" },
+          orders: { $sum: "$orders" },
+          kocs: { $sum: 1 },
+          price: { $avg: "$price" },
+          top: { $first: { creator_id: "$_id.c", revenue: "$revenue" } },
+        },
+      },
+      { $sort: { [sort]: -1, revenue: -1 } },
+      { $limit: limit },
+    ])
+    .toArray();
+  const tops = await db.collection(C.creators).find({ _id: { $in: agg.map((a) => a.top.creator_id) as never[] } }, { projection: { nickname: 1, handle: 1 } }).toArray();
+  const who = new Map(tops.map((c) => [String(c._id), c]));
+  const rows = agg.map((a, i) => {
+    const p = meta.get(String(a._id));
+    const k = who.get(a.top.creator_id);
+    return {
+      rank: i + 1,
+      product_id: String(a._id),
+      name: String(p?.name ?? ""),
+      shop: p?.seller_name ? String(p.seller_name) : "",
+      seller_id: p?.seller_id ? String(p.seller_id) : "",
+      price: num(a.price),
+      revenue: num(a.revenue),
+      orders: num(a.orders),
+      kocs: num(a.kocs),
+      top_koc: k ? String(k.nickname || k.handle) : "",
+      top_koc_handle: k ? String(k.handle ?? "").replace(/^@/, "") : "",
+      top_koc_revenue: num(a.top.revenue),
+    };
+  });
+  const numbers: Record<string, number> = { matched: prods.length, shown: rows.length };
+  rows.forEach((r) => {
+    numbers[`p${r.rank}_revenue`] = r.revenue;
+    numbers[`p${r.rank}_orders`] = r.orders;
+    numbers[`p${r.rank}_kocs`] = r.kocs;
+    numbers[`p${r.rank}_price`] = r.price;
+    numbers[`p${r.rank}_top_koc_revenue`] = r.top_koc_revenue;
+  });
+  return {
+    type: "product",
+    summary:
+      `${prods.length} sản phẩm trong dữ liệu thuộc ${what}${ex.length ? ` (đã loại tên có ${ex.map((t) => `'${t}'`).join("/")})` : ""}; top ${rows.length} theo ${sort === "orders" ? "số đơn" : sort === "kocs" ? "số KOC bán" : "doanh thu"} ` +
+      `(doanh thu/đơn ghi nhận QUA CÁC KOC đã thu thập, kỳ 30 ngày gần nhất — không phải toàn bộ doanh thu sản phẩm trên TikTok Shop): ` +
+      rows
+        .map(
+          (r) =>
+            `#${r.rank} '${r.name.slice(0, 80)}'${r.shop ? ` [${r.shop}]` : ""} giá ~${vnd(r.price)}, ${vnd(r.revenue)}, ${compact(r.orders)} đơn, ${r.kocs} KOC bán${
+              r.top_koc ? `, bán nhiều nhất: ${r.top_koc} (@${r.top_koc_handle}) ${vnd(r.top_koc_revenue)}` : ""
+            }`,
+        )
+        .join("; "),
+    rows,
+    numbers,
+    source: src,
+  };
+}
+
 // ── get_peers ─────────────────────────────────────────────────────────────────
 const COSMETICS = "848776,848648";
 
@@ -682,6 +876,36 @@ async function searchCreators(_ctx: ToolCtx, args: Args): Promise<Out> {
     match._id = { $in: [...focusRevenue.keys()] };
   }
 
+  /**
+   * Lọc theo DANH MỤC (ngành / nhóm / loại, tên hoặc id) — dùng `creator_products.cat` đã gắn sẵn nên
+   * không phải quét tên sản phẩm. Thứ hạng theo doanh thu CỦA KOC TRONG danh mục đó.
+   */
+  const catArg = typeof args.category === "string" ? args.category.trim() : "";
+  let catNode: CatNode | null = null;
+  if (catArg) {
+    catNode = await resolveCategory(catArg);
+    if (!catNode) throw new Error(`Không có danh mục '${catArg}' — gọi list_categories để xem tên/id đúng`);
+    const agg = await db
+      .collection(C.creatorProducts)
+      .aggregate<{ _id: string; revenue: number }>([
+        { $match: { [`cat.l${catNode.level}`]: catNode.id, ...(focusRevenue ? { creator_id: { $in: [...focusRevenue.keys()] } } : {}) } },
+        { $sort: { updated_at: -1 } },
+        { $group: { _id: { c: "$creator_id", p: "$product_id" }, revenue: { $first: "$revenue" } } },
+        { $group: { _id: "$_id.c", revenue: { $sum: "$revenue" } } },
+      ])
+      .toArray();
+    focusRevenue = new Map(agg.filter((a) => num(a.revenue) > 0).map((a) => [String(a._id), num(a.revenue)]));
+    if (!focusRevenue.size)
+      return {
+        type: "metric",
+        summary: `Chưa có KOC nào trong dữ liệu có doanh thu ở danh mục '${catNode.path.join(" › ")}'.`,
+        rows: [],
+        numbers: { found: 0 },
+        source: { collection: C.creatorProducts, ref: catNode.id },
+      };
+    match._id = { $in: [...focusRevenue.keys()] };
+  }
+
   if (args.age) match["audience.age_buckets_matched"] = String(args.age);
   const minF = num(args.min_followers);
   const maxF = num(args.max_followers);
@@ -696,8 +920,18 @@ async function searchCreators(_ctx: ToolCtx, args: Args): Promise<Out> {
   const docs = await db
     .collection(C.creatorMetrics)
     .aggregate<Record<string, any>>([ // eslint-disable-line @typescript-eslint/no-explicit-any
-      { $match: { category_scope: scope.category_id, date_range: scope.date_range, source: "web:creator/queryList" } },
-      { $project: { _id: 0, m: "$$ROOT" } },
+      /**
+       * Không lọc danh mục → giữ phạm vi của lượt crawl danh sách gần nhất (như trước). CÓ lọc danh mục
+       * → mọi phạm vi ngành (KOC ngành khác nằm ở category_scope khác), lấy số liệu mới nhất mỗi KOC.
+       */
+      ...(catNode
+        ? [
+            { $match: { source: "web:creator/queryList", creator_id: { $in: [...(focusRevenue?.keys() ?? [])] } } },
+            { $sort: { updated_at: -1 } },
+            { $group: { _id: "$creator_id", m: { $first: "$$ROOT" } } },
+            { $project: { _id: 0, m: 1 } },
+          ]
+        : [{ $match: { category_scope: scope.category_id, date_range: scope.date_range, source: "web:creator/queryList" } }, { $project: { _id: 0, m: "$$ROOT" } }]),
       { $lookup: { from: C.creators, localField: "m.creator_id", foreignField: "_id", as: "c" } },
       { $unwind: "$c" },
       { $replaceRoot: { newRoot: { $mergeObjects: ["$c", { m: "$m" }] } } },
@@ -719,6 +953,8 @@ async function searchCreators(_ctx: ToolCtx, args: Args): Promise<Out> {
     growth_rate: typeof d.m?.revenue_growth_rate === "number" ? d.m.revenue_growth_rate : null,
     mcn: d.mcn ? String(d.mcn) : null,
     has_detail: Boolean(d.detail_updated_at),
+    scope: String(d.m?.category_scope ?? ""),
+    industry: d.industry?.l2?.name ? `${d.industry.l1?.name ?? ""} › ${d.industry.l2.name}` : "",
     ...(focusRevenue ? { focus_revenue: focusRevenue.get(String(d._id)) ?? 0 } : {}),
   }));
   // Lọc theo sản phẩm thì thứ hạng phải theo doanh thu CHÍNH sản phẩm đó, không phải cả kênh
@@ -739,6 +975,7 @@ async function searchCreators(_ctx: ToolCtx, args: Args): Promise<Out> {
 
   const filterText = [
     q ? `tên chứa '${q}'` : null,
+    catNode ? `danh mục '${catNode.path.join(" › ")}'` : null,
     product ? `có bán '${product}'` : null,
     args.age ? `tuổi ${String(args.age)}` : null,
     minF || maxF ? `follower ${minF ? compact(minF) : "0"}–${maxF ? compact(maxF) : "∞"}` : null,
@@ -751,14 +988,14 @@ async function searchCreators(_ctx: ToolCtx, args: Args): Promise<Out> {
   return {
     type: "metric",
     summary:
-      `Tìm trong dữ liệu mỹ phẩm TikTok Việt Nam kỳ ${scope.date_range.replace("~", " → ")}${filterText ? ` (${filterText})` : ""}: ${rows.length} KOC, xếp theo ${String(args.sort ?? "revenue")}. ` +
+      `Tìm trong dữ liệu TikTok Việt Nam (${catNode ? "mọi ngành" : scopeName(scope.category_id)}) kỳ ${scope.date_range.replace("~", " → ")}${filterText ? ` (${filterText})` : ""}: ${rows.length} KOC, xếp theo ${String(args.sort ?? "revenue")}. ` +
       (rows.length
         ? rows
             .map(
               (r) =>
                 `#${r.rank} ${r.name} (id ${r.creator_id}, handle @${r.handle}): ${
-                  focusRevenue ? `doanh thu '${product}' ${vnd((r as { focus_revenue?: number }).focus_revenue ?? 0)}, ` : ""
-                }doanh thu mỹ phẩm cả kênh ${vnd(r.revenue)}, ${compact(r.followers)} follower, tương tác ${pct(r.engagement)}` +
+                  focusRevenue ? `doanh thu '${catNode ? catNode.name : product}' ${vnd((r as { focus_revenue?: number }).focus_revenue ?? 0)}, ` : ""
+                }doanh thu ${scopeName(r.scope)} ${vnd(r.revenue)}, ${compact(r.followers)} follower, tương tác ${pct(r.engagement)}` +
                 `${r.growth_rate === null ? "" : `, doanh thu ${r.growth_rate >= 0 ? "+" : ""}${p1(r.growth_rate)} so kỳ trước`}` +
                 `${r.mcn ? `, MCN ${r.mcn}` : ", chưa ký MCN"}${r.has_detail ? "" : " — CHƯA có dữ liệu chi tiết, không gọi được các công cụ đọc sâu"}`,
             )
@@ -1446,9 +1683,10 @@ export const KOC_TOOLS: ToolSpec[] = [
   {
     name: "search_creators",
     description:
-      "TÌM KOC trong toàn bộ dữ liệu đã thu thập (không giới hạn trong danh sách của một chiến dịch). Lọc theo SẢN PHẨM ĐÃ BÁN, tên/handle, follower, doanh thu tối thiểu, độ tuổi khán giả, MCN; xếp theo doanh thu / tương tác / lượt xem / follower / tăng trưởng. Dùng khi người bán hỏi tìm KOC mới, hoặc cần so với một KOC nằm ngoài danh sách hiện có. Mặc định bỏ kênh do nhà bán tự vận hành.",
+      "TÌM KOC trong toàn bộ dữ liệu đã thu thập (không giới hạn trong danh sách của một chiến dịch). Lọc theo DANH MỤC (ngành / nhóm / loại — chính xác nhất, xếp theo doanh thu KOC trong đúng danh mục đó), SẢN PHẨM ĐÃ BÁN, tên/handle, follower, doanh thu tối thiểu, độ tuổi khán giả, MCN; xếp theo doanh thu / tương tác / lượt xem / follower / tăng trưởng. Dùng khi người bán hỏi tìm KOC mới, hoặc cần so với một KOC nằm ngoài danh sách hiện có. Mặc định bỏ kênh do nhà bán tự vận hành.",
     input_schema: obj({
       q: { type: "string", description: "Tên hoặc handle KOC cần tìm (khớp gần đúng)" },
+      category: { type: "string", description: "Tên hoặc id danh mục (ngành/nhóm/loại), vd 'Serum & Tinh chất', 'Chăm sóc da', 'Trang phục nữ' — lấy từ list_categories" },
       product: {
         type: "string",
         description:
@@ -1456,7 +1694,7 @@ export const KOC_TOOLS: ToolSpec[] = [
       },
       min_followers: { type: "number" },
       max_followers: { type: "number" },
-      min_revenue: { type: "number", description: "Doanh thu mỹ phẩm 30 ngày tối thiểu, VND" },
+      min_revenue: { type: "number", description: "Doanh thu 30 ngày tối thiểu (theo phạm vi ngành đã crawl), VND" },
       age: { type: "string", enum: ["18-24", "25-34", "35-44", "45-54", "55+"], description: "Nhóm tuổi khán giả chiếm đa số" },
       mcn: { type: "string", enum: ["yes", "no"] },
       sort: { type: "string", enum: ["revenue", "engagement", "views", "followers", "growth"], default: "revenue" },
@@ -1525,6 +1763,32 @@ export const KOC_TOOLS: ToolSpec[] = [
       "GHI: cho AI XEM VIDEO của MỘT KOC trong chiến dịch (4 khung hình/video, không có âm thanh) để kiểm chứng họ có thật sự demo sản phẩm, rồi cập nhật điểm và chọn lại. Dùng khi người bán muốn xem kỹ một người cụ thể. Chỉ 1 KOC mỗi lần vì đây là bước tốn tiền và chậm nhất — không bao giờ gọi cho cả danh sách.",
     input_schema: obj({ creator_id: { type: "string", description: "id KOC muốn xem video, lấy từ campaign_context" } }, ["creator_id"]),
     run: deepenKoc,
+  },
+  {
+    name: "list_categories",
+    description:
+      "CÂY DANH MỤC đa ngành của dữ liệu (cấp 1 ngành → cấp 2 nhóm → cấp 3 loại) kèm số sản phẩm, số KOC, doanh thu mỗi nút. Không truyền parent = các ngành cấp 1; truyền tên/id một danh mục = các nhóm/loại con của nó. Dùng để biết dữ liệu có ngành/nhóm gì, nhóm nào lớn nhất, và lấy đúng tên/id danh mục trước khi lọc search_products.",
+    input_schema: obj({
+      parent: { type: "string", description: "Tên hoặc id danh mục cha, vd 'Chăm sóc da' / 'Trang phục nữ'. Bỏ trống = các ngành cấp 1" },
+      limit: { type: "integer", minimum: 1, maximum: 50, default: 15 },
+    }),
+    run: listCategories,
+  },
+  {
+    name: "search_products",
+    description:
+      "Tìm SẢN PHẨM trong toàn bộ dữ liệu theo DANH MỤC (category — chính xác nhất, lấy tên/id từ list_categories) và/hoặc từ khoá tên (không phân biệt dấu), xếp theo doanh thu / số đơn / số KOC bán; kèm giá, shop, KOC bán nhiều nhất. Dùng cho câu hỏi về SẢN PHẨM: 'loại dưỡng ẩm nào tốt/hot/bán chạy nhất', 'serum nào đang bán chạy', 'giá kem chống nắng phổ biến'. Ưu tiên category (vd 'Kem dưỡng ẩm & Xịt thơm') để không lẫn nhóm trùng chữ; thêm keywords để thu hẹp (vd category 'Chăm sóc da' + keywords ['da khô']). Một phần danh mục được suy ra từ tên nên vẫn có thể sót — muốn phủ rộng thì gọi thêm một lần chỉ với keywords đồng nghĩa. Doanh thu là phần ghi nhận qua các KOC đã thu thập.",
+    input_schema: obj(
+      {
+        category: { type: "string", description: "Tên hoặc id danh mục (cấp nào cũng được), vd 'Kem dưỡng ẩm & Xịt thơm', 'Son môi', 'Áo nữ'" },
+        keywords: { type: "array", items: { type: "string" }, maxItems: 6, description: "Từ khoá trong tên sản phẩm (OR), có dấu hay không dấu đều được" },
+        exclude: { type: "array", items: { type: "string" }, maxItems: 8, description: "Loại sản phẩm có tên chứa các từ này — nhóm trùng chữ nhưng khác loại, vd hỏi kem dưỡng ẩm cho DA thì loại son, môi, tóc, body" },
+        sort: { type: "string", enum: ["revenue", "orders", "kocs"], default: "revenue" },
+        limit: { type: "integer", minimum: 1, maximum: 30, default: 10 },
+      },
+      [],
+    ),
+    run: searchProducts,
   },
   {
     name: "list_shops",

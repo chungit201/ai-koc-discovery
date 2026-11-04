@@ -75,6 +75,7 @@ DB mới tinh: chạy `npm run db:init` một lần để tạo index — chi ti
 | `npm run dev` / `build` / `start` | chạy web | — |
 | `npm run db:tunnel` / `db:ping` / `db:init` | tunnel, kiểm tra, tạo index | — |
 | `npm run db:inspect` / `db:audit` | xem nhanh dữ liệu / kiểm tra độ đầy đủ | — |
+| `npm run crawl:worker` | bật **worker crawl chạy liên tục** dưới pm2 (máy local, tự bật lại khi đăng nhập Windows) — xem [04-crawl.md](04-crawl.md) | không, có rủi ro khóa tài khoản |
 | `npm run crawl:web` | crawl qua phiên web Kalodata | không, nhưng có rủi ro khóa tài khoản — đọc [04-crawl.md](04-crawl.md) trước |
 | `npm run crawl:shops` | điền tên shop | như trên |
 | `npm run kalo:login` / `kalo:discover` / `kalo:call` | đăng nhập, dò endpoint, gọi thử một endpoint web | như trên |
@@ -122,6 +123,8 @@ ssh root@66.42.50.32
 su - detola
 claude          # làm theo hướng dẫn đăng nhập, xong gõ /exit
 ```
+
+> **Giữ Claude CLI trên server cùng đời với máy dev.** Bản cũ (2.1.197) với `--tools ""` tắt luôn cả công cụ MCP → lượt "chỉ DB" của Tola không gọi được công cụ nào, trả lời rỗng (đã gặp 2026-11-04). Cập nhật: `ssh root@66.42.50.32 "npm i -g @anthropic-ai/claude-code@latest && claude --version"`.
 
 > Lỗi chỉ hiện khi build (dev không báo): dữ liệu theo request (`params`, `searchParams`, Mongo) đọc
 > ngoài `<Suspense>` → `next build` dừng với "uncached data during prerendering". Chạy `npm run build`

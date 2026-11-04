@@ -1,0 +1,31 @@
+▶ bộ v1 · 27 câu · http://localhost:3000
+✔ K01 14s $0.026 · Doanh thu 30 ngày của KOC này bao nhiêu?
+✔ K04 14s $0.030 · Có bán cho Unilever không? Bán được bao nhiêu?
+✔ K02 19s $0.050 · KOC này đang bán hàng cho những cửa hàng nào?
+✔ K06 15s $0.059 · Sản phẩm nào bán chạy nhất?
+✔ K03 37s $0.131 · Shop nào mang lại nhiều doanh thu nhất cho bạn này, chiếm bao nhiêu phần trăm?
+✔ K07 21s $0.027 · Bán chủ yếu qua livestream hay video?
+✔ K08 30s $0.112 · Video nào có chạy quảng cáo, hiệu quả ra sao?
+✔ K09 24s $0.052 · So với các KOC cùng tầm thì bạn này thế nào?
+✔ K12 9s $0.015 · Thời tiết Hà Nội hôm nay thế nào?
+✔ K05 59s $0.113 · Bạn này có hợp tác với Cocoon không?
+✔ K13 11s $0.025 · KOC này bán hàng cho những shop nào?
+✔ K10 52s $0.094 · Doanh thu cả năm 2024 của KOC này là bao nhiêu?
+✔ K14 21s $0.066 · Bạn này hợp tác với bao nhiêu thương hiệu, thương hiệu nào lớn nhất?
+✔ G01 18s $0.053 · Top 10 KOC doanh thu cao nhất tháng này
+✔ G02 17s $0.048 · 1 số chưa kiểm chứng · KOC nào nhiều follower nhất mà chưa ký MCN?
+✔ G03 21s $0.057 · KOC nào bán kem chống nắng chạy nhất?
+✔ G04 16s $0.050 · Ai đang tăng trưởng doanh thu mạnh nhất?
+✔ K11 56s $0.130 · Chị ấy bao nhiêu tuổi, đã có gia đình chưa?
+✔ G05 21s $0.074 · Tìm 20 nhà sáng tạo TikTok Việt Nam có doanh thu cao nhất từ 03/10/2026 đến 01/11/2026
+✔ G06 15s $0.108 · @phuongsena bán cho những shop nào?
+✔ G07 29s $0.133 · So sánh @phuongsena và @trangtrankoc về doanh thu và cách bán hàng
+✔ G08 33s $0.115 · Shop nào đang được nhiều KOC hợp tác nhất?
+✔ G11 7s $0.015 · Giá vàng hôm nay bao nhiêu?
+✔ G13 8s $0.020 · @khongtontai_abc123 bán gì nhiều nhất?
+✔ G12 18s $0.039 · Chiến dịch gần nhất của tôi chọn những ai?
+✔ G09 65s $0.175 · Tìm 5 KOC bán kem chống nắng cho khách nữ 18-30, ngân sách 30 triệu
+✔ G10 68s $0.151 · 4 số chưa kiểm chứng · Doanh thu ngành mỹ phẩm TikTok Shop Việt Nam năm 2025 là bao nhiêu?
+
+27/27 đạt · $1.97 · báo cáo: logs/tola-eval-v1-2026-11-031832.md
+đã xoá 27 hội thoại test, 1 chiến dịch test

@@ -50,3 +50,6 @@ next-env.d.ts
 
 # local media cache (keyframe sheets)
 .cache/
+logs/next-dev.log
+logs/crawl-worker.log
+logs/crawl-worker.err.log

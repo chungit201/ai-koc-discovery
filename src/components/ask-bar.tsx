@@ -998,6 +998,58 @@ function ToolTableView({ table, handle, compact: small }: { table: ToolTable; ha
       </div>
     );
 
+  if (table.tool === "list_categories")
+    return (
+      <div className={frame}>
+        <table className="w-full text-[12.5px]">
+          <tbody>
+            {rows.map((c) => (
+              <tr key={s(c.category_id)} className="border-t border-line first:border-t-0">
+                <td className="num w-8 px-3 py-2 text-ink-muted">{s(c.rank)}</td>
+                <td className="px-3 py-2">
+                  <span className="font-medium">{s(c.name)}</span>
+                  <div className="text-[11.5px] text-ink-muted">
+                    {compact(n(c.products))} sản phẩm · {compact(n(c.kocs))} KOC
+                  </div>
+                </td>
+                <td className="num w-36 px-3 py-2 text-right">
+                  {vnd(n(c.revenue))} <span className="text-ink-muted">· {share(c.share)}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+
+  if (table.tool === "search_products")
+    return (
+      <div className={frame}>
+        <table className="w-full text-[12.5px]">
+          <tbody>
+            {rows.map((p) => (
+              <tr key={s(p.product_id)} className="border-t border-line first:border-t-0">
+                <td className="num w-8 px-3 py-2 text-ink-muted">{s(p.rank)}</td>
+                <td className="w-12 py-2 pl-1">
+                  <ProductThumb id={s(p.product_id)} name={s(p.name)} />
+                </td>
+                <td className="px-3 py-2">
+                  <span className="line-clamp-2">{s(p.name)}</span>
+                  <span className="text-[11.5px] text-ink-muted">
+                    {s(p.shop) || "—"} · giá ~{vnd(n(p.price))} · {n(p.kocs)} KOC bán
+                  </span>
+                </td>
+                <td className="num w-36 px-3 py-2 text-right">
+                  {vnd(n(p.revenue))}
+                  <div className="text-ink-muted">{compact(n(p.orders))} đơn</div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+
   if (table.tool === "list_shops")
     return (
       <div className={frame}>
